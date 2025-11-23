@@ -16,9 +16,11 @@ def stuffing(message: str) -> str:
         if i == "1":
             counter +=1
             if counter == 5:
-                messageout.append(0)
+                messageout.append("0")
                 counter = 0
         if i == "0":
             counter = 0
+    print("message:",messageout)
     return "".join(messageout)
 
+stuffing("0101101111110")
