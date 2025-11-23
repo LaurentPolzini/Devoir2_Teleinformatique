@@ -62,9 +62,18 @@ def destuff(message: str) -> str:
     return "".join(messageout)
 
 
+def add_flags(message: str) -> str:#add les flag une fois que stuffed.
+    print("avec flags",flag + message + flag)
+    return flag + message + flag
 
 
+def remove_flags(message: str) -> str:
+    
+    if not message.startswith(flag) or not message.endswith(flag):
+        raise ValueError("flags pas présents, erreur")
+    print("flags enlevés:",message[len(flag):-len(flag)])
+    return message[len(flag):-len(flag)]
 
+test = destuff(stuffing("0101101111110"))
 
-
-destuff(stuffing("0101101111110"))
+test2 =remove_flags(add_flags(test))
