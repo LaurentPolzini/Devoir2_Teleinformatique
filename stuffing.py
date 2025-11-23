@@ -1,4 +1,8 @@
 #Code pour bit stuffing 
+flag = "01111110" # pour apres, flag a ajouter
+
+
+
 
 def stuffing(message: str) -> str:
     #message est u
@@ -23,4 +27,44 @@ def stuffing(message: str) -> str:
     print("message:",messageout)
     return "".join(messageout)
 
-stuffing("0101101111110")
+
+
+
+def destuff(message: str) -> str:
+    
+    #Retire les bits ajoutés par le bit-stuffing HDLC.
+    
+    print("destuff in:",message)
+    messageout = []
+    count_ones = 0
+    i = 0
+    n = len(message)
+
+    while i < n:
+        b = message[i]
+        if b not in ("0", "1"):
+            raise ValueError("message doit contenir uniquement '0' et '1'")
+
+        messageout.append(b)
+
+        if b == "1":
+            count_ones += 1
+            if count_ones == 5:
+                # si bit suivant est '0' onsaute (stuffed)
+                if i + 1 < n and message[i + 1] == "0":
+                    i += 1  # on saute le 0
+                count_ones = 0
+        else:
+            count_ones = 0
+
+        i += 1
+    print("destuff out message",messageout)
+    return "".join(messageout)
+
+
+
+
+
+
+
+destuff(stuffing("0101101111110"))
