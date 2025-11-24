@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "__locale": "c",
+        "string": "c",
+        "string_view": "c",
+        "__string": "c",
+        "select.h": "c",
+        "protocole.h": "c"
+    }
+}
