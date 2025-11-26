@@ -1,0 +1,3 @@
+Bonjour je suis un test en ASCII. Tout du moins, je l espere.
+Ce test n est pas assez long, alors le voici rallonge. Je n utilise pas 
+ni d apostrophe ni d accent.

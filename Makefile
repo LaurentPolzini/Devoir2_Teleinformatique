@@ -11,8 +11,10 @@ else
 endif
 
 EXC=emulation
+
 SRC=$(wildcard *.c)
 OBJ=$(SRC:.c=.o)
+
 
 all:
 ifeq ($(DEBUG),yes)
@@ -24,6 +26,7 @@ endif
 
 $(EXC): $(OBJ)
 	@$(CC) -o $@ $^ $(LDFLAGS)
+
 
 %.o: %.c
 	@$(CC) -o $@ -c $< $(CFLAGS)
@@ -37,7 +40,8 @@ mrproper: clean
 	@rm -rf $(EXC)
 
 
-protocole.o: protocole.h
+protocole.o: protocole.h canal.h util.h
 util.o: util.h
-
 canal.o: protocole.h canal.h util.h
+testo.o: protocole.h canal.h util.h
+

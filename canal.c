@@ -8,29 +8,33 @@
 #include "util.h"
 #include "protocole.h"
 
-#define SIZE_MAX_FRAME 100 // octets
-#define DELIMITER 0x7E // 01111110
-#define SIZE_FILE_MAX 4096 // 10 Ko
-
 size_t dataMaxLen = 100; // 100 octets est la taille maximale de la trame hors CRC et en tete (donc juste données)
 
-float probErreur = 0;
-float probPerte = 0;
-int delaiMax = 0;
+int probErreur = -1;
+int probPerte = -1;
+int delaiMax = 10;
 
-int timeout = 10;
+int timeout = 20;
 
+int getTimeOut(void) {
+    return timeout;
+}
 
 int verify_CRC(uint8_t *Tx, int polynome) {
+    return 1;
+    if (!Tx || Tx[0] == 0) {
+        return 0;
+    }
     (void) Tx, (void) polynome;
-    return 0;
+    return 1;
 }
 
 /// @brief return the Cyclical Redundancy Code of the frame
 /// @param CRC either 16 or 32 bits. Will contain result
 /// @param frame must be only header and datas
 void initiates_CRC(uint16_t *CRC_16, uint32_t *CRC_32, uint8_t *frame, int polynome) {
-
+    (void) CRC_16, (void) CRC_32, (void) frame, (void) polynome;
+    *CRC_16 = 0x0102;
 }
 
 /*
@@ -89,16 +93,20 @@ uint8_t *create_frame(uint8_t adress, uint8_t *datas, size_t dataSize, unsigned 
         libereSiDoitEtreLiberer((void **) &FCS_16, EXIT_FAILURE);
     }
 
-    size += 3;
+    size += 3; // adress + 2 DELIMITERS
     size += dataSize;
 
-    // core of frame : header (adress + command) + msg. 
-    uint8_t *core_frame = malloc(sizeof(uint8_t) * (2 + dataSize));
+    // core of frame : adress + msg. 
+    uint8_t *core_frame = malloc(sizeof(uint8_t) * (1 + dataSize));
     libereSiDoitEtreLiberer((void **) &core_frame, EXIT_FAILURE);
     size_t size_core_frame = 0;
     core_frame[size_core_frame++] = adress;
     memcpy(&core_frame[size_core_frame], datas, dataSize);
     size_core_frame += dataSize;
+
+    // TODO STUFFING PAR LA (double stuffing meme : ca va mettre un 0 tous les 5 "1")
+    // (mais j'aimerai n'avoir que des octets, donc a la fin du corps de la trame j'ajoute des 0
+    // jusqu'a obtenir un octet complet)
 
     // creates the CRC
     int poly = 16;
@@ -143,35 +151,41 @@ uint8_t **framing(char *datas_file_name, uint8_t adress, unsigned char CRC, int 
 
     reads_msg(datas_file_name, &totalRead, entire_msg);
 
-    size_t curseur = 0;
-    int nbFrameNecessary = totalRead / dataMaxLen;
+    int nbFrameNecessary = (totalRead + dataMaxLen - 1) / dataMaxLen;
 
-    uint8_t **datas_frac = calloc(nbFrameNecessary, sizeof(uint8_t *));
-    libereSiDoitEtreLiberer((void **) &datas_frac, EXIT_FAILURE);
+    uint8_t **datas_frac = malloc(nbFrameNecessary * sizeof(uint8_t *));
+    if (!datas_frac) exit(EXIT_FAILURE);
 
-    size_t lastFrameSize = totalRead % dataMaxLen;
+    for (int i = 0; i < nbFrameNecessary; ++i) {
+        size_t chunkSize = ((i == nbFrameNecessary - 1) && (totalRead % dataMaxLen))
+                            ? (totalRead % dataMaxLen)
+                            : dataMaxLen;
 
-    int i = 0;
-    while (totalRead >= dataMaxLen) {
-        memcpy(datas_frac[i++], &(entire_msg[curseur]), dataMaxLen);
-        totalRead -= dataMaxLen;
-        curseur += dataMaxLen;
+        datas_frac[i] = malloc(chunkSize);
+        if (!datas_frac[i]) exit(EXIT_FAILURE);
+
+        memcpy(datas_frac[i], &entire_msg[i * dataMaxLen], chunkSize);
     }
-    memcpy(datas_frac[i], &(entire_msg[curseur]), lastFrameSize); // what's left of totalRead
 
-    uint8_t **frameSequence = calloc(nbFrameNecessary, sizeof(uint8_t *));
-    libereSiDoitEtreLiberer((void **) &frameSequence, EXIT_FAILURE);
-    for (int i = 0 ; i < nbFrameNecessary ; ++i) {
-        if (i == nbFrameNecessary - 1) {
-            frameSequence[i] = create_frame(adress, datas_frac[i], lastFrameSize, CRC);
-        } else {
-            frameSequence[i] = create_frame(adress, datas_frac[i], dataMaxLen, CRC);
-        }
+
+    uint8_t **frameSequence = malloc(nbFrameNecessary * sizeof(uint8_t *));
+    for (int i = 0; i < nbFrameNecessary; ++i) {
+        size_t chunkSize = ((i == nbFrameNecessary - 1) && (totalRead % dataMaxLen))
+                            ? (totalRead % dataMaxLen)
+                            : dataMaxLen;
+        frameSequence[i] = create_frame(adress, datas_frac[i], chunkSize, CRC);
     }
+
 
     *nbFrame = nbFrameNecessary;
 
-    cleanPtr((void **) &datas_frac);
+    for (int i = 0; i < nbFrameNecessary; ++i) {
+        free(datas_frac[i]);
+    }
+    free(datas_frac);
+
+    free(entire_msg);
+
     return frameSequence;
 }
 
@@ -179,21 +193,28 @@ uint8_t **framing(char *datas_file_name, uint8_t adress, unsigned char CRC, int 
     expects flags, else wouldn't be able to calculate length
 */
 size_t getLeng(uint8_t *frame) {
+    if (!frame || frame[0] == 0) {
+        return 0;
+    }
     size_t len = 1;
-    while (frame[len++] != DELIMITER);
 
-    return len;
+    while (frame[len++] != DELIMITER && len < SIZE_MAX_FRAME);
+
+    return len;  // +1 pour inclure le délimiteur
 }
 
 /*
-    return a random number between 0x00 & 0xFF
-    Aims to be logical !XORed with a byte.
-
-    Returns smth like 0b11011101. It includes 2 errors
-    with something like 0b11110111 !XOR 0b11011101 => 0b
+    Introduces errors in a byte
 */
-uint8_t randError(int prob) {
-    return 0;
+uint8_t introduceByteError(uint8_t x) {
+    uint8_t xWerror = x;
+
+    for (int i = 0; i < 8; i++) {
+        if ((rand() % 100) <= probErreur) {
+            xWerror ^= (1 << i);
+        }
+    }
+    return xWerror;
 }
 
 /*
@@ -202,49 +223,83 @@ uint8_t randError(int prob) {
     Pas besoin de la taille de la trame que l'on va envoyer : on a le flag de debut et fin qui permettent de delimiter
     mais pour le coup ca fait un passage dans une boucle qui n'aurait pas forcement était necessaire.
 */
-tSendingFrame *send_through_channel(tSendingFrame envoi) {
-    srand(time(NULL)); // seed of random calls
-    float isLost = (rand() % 100) / 100; // proba erreur is 0.05 not 5
-    tSendingFrame *toSend = malloc(sizeof(tSendingFrame));
+tSendingFrame send_through_channel(tSendingFrame envoi) {
+    int isLost = rand() % 100; // proba erreur is 50 not 0.5
+    tSendingFrame toSend = createSendingFrame(0, getNumSeq(envoi));
     if (isLost <= probPerte) {
         printf("Paquet perdu\n");
-        addFrame(toSend, NULL);
-        changeSeqNum(toSend, -1);
-
         return toSend;
     }
-    size_t lenFrame = getLeng(envoi);
-    
-    // find length with flags
-    uint8_t *frameWError = calloc(lenFrame, sizeof(uint8_t));
-    libereSiDoitEtreLiberer((void **) &frameWError, EXIT_FAILURE);
 
     uint8_t *cleanFrame = getFrame(envoi);
-
-    float err;
-    for (size_t i = 0 ; i < lenFrame ; ++i) {
-        err = (rand() % 100) / 100; // TODO smth wrong here
-        frameWError[i] = (err <= probErreur) ? !cleanFrame[i] : cleanFrame[i]; // transform 1 to 0 or 0 to 1 if error.
-    }
-    float delai = (rand() % delaiMax) / 1000; // sleep is in seconds. Delay is in ms
-    changeSeqNum(toSend, 0);
+    size_t lenFrame = getFrameSize(envoi);
     
-    sleep(delai);
+    uint8_t frameWError[lenFrame];
+
+    for (size_t i = 0 ; i < lenFrame ; ++i) {
+        frameWError[i] = introduceByteError(cleanFrame[i]); // transform some 1 to 0 or 0 to 1 if error.
+    }
+    float delai = (rand() % delaiMax); // delay is in ms
+
+    addFrame(toSend, frameWError, lenFrame);
+    usleep(delai * 1000); // en microsec
 
     return toSend;
 }
 
+void printDataFrame(tSendingFrame frame, int CRC) {
+    size_t dataLen = getFrameSize(frame) - 1 - (CRC ? 4 : 2) - 2; // longueur du champ data
+    if (dataLen > 0) {
+        char *buffer = malloc(dataLen + 1);
+        memcpy(buffer, &(getFrame(frame)[2]), dataLen);
+        buffer[dataLen] = '\0';
+
+        printf("%s\n", buffer);
+
+        free(buffer);
+    } else {
+        printf("Taille nulle - pas de données\n");
+    }
+}
+
+void afficheFrame(tSendingFrame frame, int CRC) {
+    size_t frameSize = getFrameSize(frame);
+    uint8_t *fram = getFrame(frame);
+    printf("Frame size : %zu\n", frameSize);
+    if (frameSize > 0) {
+        printf("Adress : %hhu\n", fram[1]);
+
+        size_t endData = frameSize - 1 - (CRC ? 4 : 2); // -2 : end DELIMITER + indexing
+        printf("Size data : %zu\n", endData - 2);
+        printf("Data : \n");
+
+        printDataFrame(frame, CRC);    
+
+        printf("CRC : \n");
+        for (size_t i = endData ; i < frameSize - 1 ; ++i) {
+            printf("%hhu ", fram[i]);
+            fflush(stdout);
+        }
+        printf("\n");
+    } else {
+        printf("Taille nulle - pas de données\n");
+    }
+}
+
+/*
 int main(int argc, char *argv[]) {
+    srand(time(NULL)); // seed of random calls
     if (argc != 4) {
         printf("4 arguments sont requis ! executable, proba erreur, proba perte, delai max");
         exit(EXIT_FAILURE);
     }
 
-    probErreur = atof(argv[1]);
-    probPerte = atof(argv[2]);
-    delaiMax = (int) argv[3]; // ms
+    probErreur = atof(argv[1]) * 100;
+    probPerte = atof(argv[2]) * 100;
+    delaiMax = atoi(argv[3]); // ms
 
     timeout = 2 * delaiMax; // dans protocole
 
     return 0;
 }
+*/
