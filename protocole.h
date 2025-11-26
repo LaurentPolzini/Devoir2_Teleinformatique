@@ -21,7 +21,7 @@ void go_back_n_recepteur(void);
 void go_back_n_emetteur(char *datas_file_name, uint8_t adress, int CRC);
 
 void init(int emission);
-void envoie_reseau(tSendingFrame *frame);
-void recoit_reseau(tSendingFrame *frame);
+void envoie_reseau(tSendingFrame frame, short physicalPortDest);
+void recoit_reseau(tSendingFrame frame);
 
 #endif

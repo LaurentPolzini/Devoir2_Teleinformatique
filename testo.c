@@ -125,7 +125,7 @@ void testConnection(void) {
     toto[2] = DELIMITER;
 
     tSendingFrame frameTest = createSendingFrame(toto, 2);
-    tSendingFrame received;
+    tSendingFrame received = createSendingFrame(NULL, 0);
 
     pid_t pidFils = -1;
     switch (pidFils = fork()) {
@@ -134,14 +134,14 @@ void testConnection(void) {
             exit(1);
         case 0:
             init(RECEPTION);
-            recoit_reseau(&received);
-            printf("RECEP : num seq : %d, msg : %s\n", getNumSeq(received), getFrame(received));
+            recoit_reseau(received);
+            printf("RECEP : num seq : %d, msg : %s\n\n", getNumSeq(received), getFrame(received));
 
             exit(EXIT_SUCCESS);
         default:
             init(EMISSION);
-            envoie_reseau(&frameTest);
-            printf("ENVOIE num seq : %d, msg : %s\n", getNumSeq(frameTest), getFrame(frameTest));
+            envoie_reseau(frameTest, 2501);
+            printf("ENVOIE num seq : %d, msg : %s\n\n", getNumSeq(frameTest), getFrame(frameTest));
             waitpid(pidFils, NULL, 0);
     }
 }

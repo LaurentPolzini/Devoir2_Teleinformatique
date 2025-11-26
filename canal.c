@@ -249,7 +249,7 @@ tSendingFrame send_through_channel(tSendingFrame envoi) {
 
 void printDataFrame(tSendingFrame frame, int CRC) {
     size_t dataLen = getFrameSize(frame) - 1 - (CRC ? 4 : 2) - 2; // longueur du champ data
-    if (dataLen > 0) {
+    if (getFrameSize(frame) > 0) {
         char *buffer = malloc(dataLen + 1);
         memcpy(buffer, &(getFrame(frame)[2]), dataLen);
         buffer[dataLen] = '\0';
