@@ -98,16 +98,36 @@ def destuff(message: str) -> str:
         if b not in ("0", "1"):
             raise ValueError("message doit contenir uniquement '0' et '1'")
 
+        #add bit courant a la sortie
         messageout.append(b)
 
         if b == "1":
             count_ones += 1
+
             if count_ones == 5:
-                # si bit suivant est '0' onsaute (stuffed)
-                if i + 1 < n and message[i + 1] == "0":
-                    i += 1  # on saute le 0
-                count_ones = 0
+                stuffed_index = i + 1
+
+                #Si pas de bit après les 5 '1' alors erreur
+                if stuffed_index >= n:
+                    raise ValueError(
+                        "Trame corrompue : bit stuffed manquant après 5 bits à '1'"
+                    )
+
+                stuffed_bit = message[stuffed_index]#celui d'apres en gros vu que stuffed index est i+1
+
+                #stuffed bit doit etre 0 sinon corruption
+                if stuffed_bit != "0":
+                    raise ValueError(
+                        "Trame corrompue : bit stuffed différent de '0' "
+                        f"(reçu '{stuffed_bit}' à '{stuffed_index}')"
+                    )
+
+                #si pas d'erruer: on saute le bit stuffed
+                i = stuffed_index # on avance jusqu'au stuffed
+                count_ones = 0# on remet le compteur a zéro
+
         else:
+            # reset compter a zero
             count_ones = 0
 
         i += 1
