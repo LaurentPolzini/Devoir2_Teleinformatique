@@ -7,4 +7,8 @@ void libereSiDoitEtreLiberer(void **ptr, int exitVal);
 // cleans a pointer. Free and set to NULL
 void cleanPtr(void **ptr);
 
+void file_to_bytes(char *datas_file_name, size_t *total_read, uint8_t *entire_msg);
+
+uint8_t introduceByteError(uint8_t x, int probError);
+
 #endif

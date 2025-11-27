@@ -40,8 +40,9 @@ mrproper: clean
 	@rm -rf $(EXC)
 
 
-protocole.o: protocole.h canal.h util.h
 util.o: util.h
-canal.o: protocole.h canal.h util.h
-testo.o: protocole.h canal.h util.h
+
+protocole.o: protocole.h util.h canal.h
+canal.o: canal.h protocole.h util.h
+test.o: canal.h protocole.h util.h
 

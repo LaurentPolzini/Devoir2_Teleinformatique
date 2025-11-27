@@ -5,6 +5,8 @@
         "string_view": "c",
         "__string": "c",
         "select.h": "c",
-        "protocole.h": "c"
+        "protocole.h": "c",
+        "time.h": "c",
+        "canal.h": "c"
     }
 }

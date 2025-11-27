@@ -1,23 +1,40 @@
 #ifndef __CANAL_H__
 #define __CANAL_H__
+
+#include <unistd.h>
 #include "protocole.h"
 
-#define SIZE_MAX_FRAME 107 // octets. Data max length = 100. 2 delimiters + adress + CRC 32 (4 bytes)
-#define DELIMITER 0x7E // 01111110
+#define SIZE_MAX_FRAME 102 // octets. Data max length = 100. 2 delimiters
 #define SIZE_FILE_MAX 4096 // 10 Ko
 
-tSendingFrame send_through_channel(tSendingFrame envoi);
+#define EMISSION 1
+#define RECEPTION 0
 
-uint8_t *create_frame(uint8_t adress, uint8_t *datas, size_t dataSize, unsigned char CRC);
-uint8_t **framing(char *datas_file_name, uint8_t adress, unsigned char CRC, int *nbFrame);
-
+/*
+    Few getters on channel information
+*/
 int getTimeOut(void);
+int getPhysicalDestRcpt(void);
+int getPhysicalDestEmission(void);
+int getPhysicalLocalRcpt(void);
+int getPhysicalLocalEmission(void);
 
-size_t getLeng(uint8_t *frame);
+/*
+    Connecte les sockets et les ports
+*/
+void init(int emission);
 
-int verify_CRC(uint8_t *Tx, int polynome);
+void closeChannel(void);
 
-void printDataFrame(tSendingFrame frame, int CRC);
-void afficheFrame(tSendingFrame frame, int CRC);
+/*
+    Envoie via les ports de communication
+*/
+void envoie_reseau(frame_t *frame, short physicalPortDest);
+
+/*
+    Recoit depuis le port d'entree
+*/
+void recoit_reseau(frame_t *frame);
+
 
 #endif

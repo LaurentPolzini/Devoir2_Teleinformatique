@@ -205,6 +205,7 @@ void testSendThrough(void) {
     free(frameReady);
 }
 
+/*
 int main(void) {
     srand(time(NULL));
 
@@ -212,4 +213,4 @@ int main(void) {
     
     return 0;
 }
-
+*/

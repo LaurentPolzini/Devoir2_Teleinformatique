@@ -1,231 +1,175 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/socket.h>
 #include <unistd.h>
-#include <sys/select.h>
-#include <ctype.h>
-#include <netdb.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <errno.h>
 #include <time.h>
 
 #include "protocole.h"
-#include "util.h"
 #include "canal.h"
+#include "util.h"
 
-/*
-    Protocole Go-Back-N simplifié :
-        Nous avons un canal qui simule du délai, de la perte et des erreurs.
-        Chaque trame passe par le canal avant d'etre effectivement envoyée par une socket.
-            (Le canal est une fonction qui introduit des erreurs et peut dormir.)
-
-        D'un coté et de l'autre du canal nous avons un émetteur et un recepteur.
-
-        L'emetteur a une window de taille N - 1. Ici N = 8, donc la fenetre est de taille 7.
-        Il envoie toute sa fenetre, lance un timer et attend un ACK. S'il ne le recoit pas avant que le timer
-        sonne, on renvoit toute la fenetre. Ma derniere trame a envoyer vaut NULL mais son numéro de séquence vaut N
-
-        Le recepteur attend taille_fenetre trames ou jusqu'a ce qu'un paquet soit perdu.
-        Il envoie un ACK du dernier numéro de sequence obtenu.
-        Il n'accepte pas les trames erronées.
-        Il n'a pas de fenetre, il recoit les trames une par une et la verifie.
-        Effectivement, comme les trames arrivent dans l'ordre, le recepteur n'a pas besoin de fenetre
-        Il n'a pas de timer et s'arrete lorsqu'il recoit une trame numérotée N.
-*/
-
-
-
-#define PORT 8080
-
-
-short physique_port_local_emi = 2000;
-short physique_port_destination_emi = 2001;
-
-short physique_port_local_rcpt = 2000;
-short physique_port_destination_rcpt = 2001;
-
-int physique_socket;
-
-char destination[10] = "localhost";
-
-struct sSendingFrame {
-    uint8_t frame[SIZE_MAX_FRAME];
-    size_t frameSize;
-    int seqNum;
-};
+#define POLY 16
 
 int N = 8; // 0 à 7. n = 3, N = 2^n
 int tailleFenetre = 7; // window size = N - 1
 
-//CRC : 0 : 16 ; 1 : 32 bits CRC
-
-tSendingFrame createSendingFrame(uint8_t *framE, int seqnuM) {
-    tSendingFrame fram = malloc(sizeof(struct sSendingFrame));
-    size_t frameLeng = getLeng(framE);
-    if (frameLeng > SIZE_MAX_FRAME) {
+frame_t createFrame(uint8_t *datas, uint8_t seqnuM, uint8_t comm, size_t dataLeng) {
+    frame_t fram;
+    if (dataLeng > DATA_MAX_LEN) {
         fprintf(stderr, "Trame trop grande !\n");
         exit(EXIT_FAILURE);
     }
-    if (frameLeng > 0) {
-        memcpy(fram->frame, framE, frameLeng);
-    } else {
-        (fram->frame)[0] = 0;
+    if (dataLeng > 0) {
+        memcpy(&((fram.info)[1]), datas, dataLeng);
     }
-    fram->seqNum = seqnuM;
-    fram->frameSize = frameLeng;
+    (fram.info)[0] = DELIMITER;
+    (fram.info)[DATA_MAX_LEN - 1] = DELIMITER;
+    fram.num_seq = seqnuM;
+    fram.lg_info = dataLeng;
+    fram.commande = comm;
+
+    fram.somme_ctrl = calculate_CRC(fram);
+
     return fram;
 }
 
-tSendingFrame addFrame(tSendingFrame frameToSend, uint8_t *frame, size_t frameSize) {
-    if (frameSize <= SIZE_MAX_FRAME) {
-        memcpy(frameToSend->frame, frame, frameSize);
-        frameToSend->frameSize = frameSize;
+frame_t *framesFromFile(char *file_name, int *nbOfFramesCreated) {
+    // reads message in text file
+    uint8_t *entire_msg = malloc(sizeof(uint8_t) * SIZE_FILE_MAX);
+    libereSiDoitEtreLiberer((void **) &entire_msg, EXIT_FAILURE);
+    size_t totalRead = 0;
+
+    file_to_bytes(file_name, &totalRead, entire_msg);
+
+    int nbFrameNecessary = (totalRead + DATA_MAX_LEN - 1) / DATA_MAX_LEN;
+
+    uint8_t **datas_frac = malloc(nbFrameNecessary * sizeof(uint8_t *));
+    libereSiDoitEtreLiberer((void **) &datas_frac, EXIT_FAILURE);
+
+    /*
+        Allocation de la place nécessaire
+    */
+    for (int i = 0; i < nbFrameNecessary; ++i) {
+        size_t chunkSize = ((i == nbFrameNecessary - 1) && (totalRead % DATA_MAX_LEN))
+                            ? (totalRead % DATA_MAX_LEN)
+                            : DATA_MAX_LEN;
+
+        datas_frac[i] = malloc(chunkSize + 2);
+        libereSiDoitEtreLiberer((void **) &(datas_frac[i]), EXIT_FAILURE);
+
+        memcpy(&(datas_frac[i][1]), &entire_msg[i * DATA_MAX_LEN], chunkSize);
     }
-    return frameToSend;
+    frame_t *frames_army = malloc(sizeof(struct frame_s) * nbFrameNecessary);
+
+    for (int i = 0; i < nbFrameNecessary; ++i) {
+        size_t chunkSize = ((i == nbFrameNecessary - 1) && (totalRead % DATA_MAX_LEN))
+                            ? (totalRead % DATA_MAX_LEN)
+                            : DATA_MAX_LEN;
+        frames_army[i] = createFrame(datas_frac[i], i % N, DATA, chunkSize);
+    }
+
+    *nbOfFramesCreated = nbFrameNecessary;
+
+    for (int i = 0; i < nbFrameNecessary; ++i) {
+        free(datas_frac[i]);
+    }
+    free(datas_frac);
+
+    free(entire_msg);
+
+    return frames_army;
 }
 
-tSendingFrame changeSeqNum(tSendingFrame frameToSend, int num) {
-    frameToSend->seqNum = num;
-    return frameToSend;
+
+//---- GETTERS ----
+uint8_t getCommande(frame_t frame) {
+    return frame.commande;
 }
 
-void recalculateLeng(tSendingFrame frameToSend) {
-    frameToSend->frameSize = getLeng(getFrame(frameToSend));
+uint8_t getNum_seq(frame_t frame) {
+    return frame.num_seq;
 }
 
-uint8_t *getFrame(tSendingFrame frameReady) {
-    return frameReady->frame;
+uint16_t getSomme_ctrl(frame_t frame) {
+    return frame.somme_ctrl;
 }
 
-int getNumSeq(tSendingFrame frameReady) {
-    return frameReady->seqNum;
+uint8_t *getInfo(frame_t *frame) {
+    return frame->info;
 }
 
-size_t getFrameSize(tSendingFrame frameReady) {
-    return frameReady->frameSize;
+uint8_t getLengthInfo(frame_t frame) {
+    return frame.lg_info;
 }
 
-/*
-    Network initialization, with port. To be used by emitter and receptor
 
-    1 : emission / 0 : reception
-*/
-void init(int emission) {
-    uid_t uid = getuid();
+size_t getLengDatas(uint8_t *datas) {
+    if (!datas || datas[0] == 0) {
+        return 0;
+    }
+    size_t len = 1;
 
-    unsigned short port_local;
-    unsigned short port_distant;
+    while (datas[len++] != DELIMITER && len < DATA_MAX_LEN);
 
-    if (emission) {
-        port_local = uid % 60000 + 3000;
-        port_distant = uid % 60000 + 2000;
+    return len;  // +1 pour inclure le délimiteur
+}
 
-        physique_port_local_emi = port_local;
-        physique_port_destination_emi = port_distant;
+//---- SETTERS ----
+void setCommande(frame_t *frame, uint8_t comm) {
+    frame->commande = comm;
+}
+
+void setNum_seq(frame_t *frame, uint8_t numSeq) {
+    frame->num_seq = numSeq;
+}
+
+void setSomme_ctrl(frame_t *frame, uint16_t ctrl_sum) {
+    frame->somme_ctrl = ctrl_sum;
+}
+
+void setInfo(frame_t *frame, uint8_t *datas, size_t lengDatas) {
+    if (lengDatas <= DATA_MAX_LEN) {
+        memcpy(&(frame->info), datas, lengDatas);
+        frame->lg_info = lengDatas;
     } else {
-        port_local = uid % 60000 + 2000;
-        port_distant = uid % 60000 + 3000;
-
-        physique_port_local_rcpt = port_local;
-        physique_port_destination_rcpt = port_distant;
+        fprintf(stderr, "Autant de données ne peuvent être stockée dans une trame ! (length : %zu)", lengDatas);
+        exit(EXIT_FAILURE);
     }
-
-    struct sockaddr_in adr_locale;
-
-    physique_socket = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-
-    if (physique_socket < 0)
-    {
-        perror("socket() erreur : ");
-        exit(1);
-    }
-
-    adr_locale.sin_port = htons(port_local);
-    adr_locale.sin_family = AF_INET;
-    adr_locale.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(physique_socket, (struct sockaddr *)&adr_locale, 
-        sizeof(adr_locale)) < 0) {
-            perror("bind() erreur : ");
-            close(physique_socket);
-
-            exit(1);
-    }
-
-    if (emission) {
-        printf("EMI : On utilise le port local %d et le port distant %d\n",
-           port_local, port_distant);
-    } else {
-        printf("RECPT : On utilise le port local %d et le port distant %d\n",
-           port_local, port_distant);
-    }
-    
 }
 
-tSendingFrame *prepareFrames(uint8_t **frames, int nbOfFrames) {
-    tSendingFrame *framesToSend = malloc(sizeof(struct sSendingFrame) * nbOfFrames);
-    libereSiDoitEtreLiberer((void **) &framesToSend, EXIT_FAILURE);
-
-    for (int i = 0 ; i < nbOfFrames ; ++i) {
-        framesToSend[i] = createSendingFrame(frames[i], i % N);
-    }
-
-    return framesToSend;
+void setFrameLost(frame_t *frame) {
+    frame->num_seq = -1;
+    frame->info[0] = 0;
 }
 
 /*
-    Utilise les ports. Recoit depuis le reseau. 
+    Affiche les données de la trame
 */
-void recoit_reseau(tSendingFrame frame) {
-    int l_data;
-
-    l_data = recvfrom(physique_socket, frame, sizeof(struct sSendingFrame), 0, NULL, NULL);
-
-    if (l_data < 0)
-    {
-        perror("recvfrom() erreur.");
-        close(physique_socket);
-        exit(1);
-    }
-    //printf("Frame recue\n");
+void afficheFrame(frame_t frame) {
+    printf("Il y a %d octets de données : %s\n", getLengthInfo(frame), getInfo(&frame));
+    printf("Son numéro de commande est %d\n", getCommande(frame));
+    printf("Et son numéro de contrôle est %s.\n", verify_CRC(frame) ? "correct" : "incorrect");
 }
 
 /*
-    Permet d'envoyer sur le reseau en utilisant les ports
+    Calcul le CRC 16 sur les données de la trame
 */
-void envoie_reseau(tSendingFrame frame, short physicalPortDest) {
-    struct hostent *host;
-    struct sockaddr_in adresse_dest;
-    int l_adr = sizeof(adresse_dest);
-
-    host = gethostbyname(destination);
-    if (host == NULL) {
-        perror("gethostbyname() erreur : ");
-        close(physique_socket);
-        exit(1);
-    }
-
-    memcpy((void *)&(adresse_dest.sin_addr), (void *)host->h_addr_list[0], host->h_length);
-    
-    adresse_dest.sin_port = htons(physicalPortDest);
-    adresse_dest.sin_family = AF_INET;
-
-    int l_data;
-
-    l_data = sendto(physique_socket, frame, sizeof(struct sSendingFrame), 0, 
-       (struct sockaddr *)&adresse_dest, l_adr);
-
-
-    if (l_data < 0) {
-        perror("sendto() n'a pas fonctionnée.");
-        close(physique_socket);
-        exit(1);
-    }
-    //printf("Frame envoyée\n");
+uint16_t calculate_CRC(frame_t frame) {
+    (void) frame;
+    return 0;
 }
+
+/*
+    Vérifie le checksum
+*/
+int verify_CRC(frame_t frame) {
+    return 1;
+    
+    (void) frame;
+}
+
 
 /*
     has a window with frames in it.
@@ -239,33 +183,31 @@ void envoie_reseau(tSendingFrame frame, short physicalPortDest) {
 
     parameters : uint8_t **frames, int nbOfFrames
 */
-void go_back_n_emetteur(char *datas_file_name, uint8_t adress, int CRC) {
+void go_back_n_emetteur(char *datas_file_name) {
+    time_t tpsDeb = time(NULL);
     int nbOfFrameSent = 0;
     int nbOfACKReceived = 0;
-    time_t tpsDeb = time(NULL);
+    int maxTry = 1000;
+    int nbTry = 0;
 
     int nbOfFrameToSend = 0;
-    uint8_t **frames = framing(datas_file_name, adress, CRC, &nbOfFrameToSend);
+    frame_t *framesReadyToBeSent = framesFromFile(datas_file_name, &nbOfFrameToSend);
     printf("I have to send %d frames\n", nbOfFrameToSend);
 
-    tSendingFrame *preparedFrames = prepareFrames(frames, nbOfFrameToSend);
     int indNextFrameToAddToWindow = 0;
 
     int receivedFrame = 0;
 
-    int maxTry = 1000;
-    int nbTry = 0;
-
-    tSendingFrame window[tailleFenetre];
+    frame_t window[tailleFenetre];
     for (int i = 0 ; i < tailleFenetre && i < nbOfFrameToSend; ++i) {
-        window[i] = preparedFrames[i];
+        window[i] = framesReadyToBeSent[i];
         ++indNextFrameToAddToWindow;
     }
     int indexFirstElemWindow = 0;
     int currSend = 0;
 
-    tSendingFrame modifiedFrame, ACK;
-    ACK = createSendingFrame(NULL, -1);
+    frame_t ack;
+    ack = createFrame(0x00, -1, ACK, 0);
 
     int nbOfChangedFrame = indNextFrameToAddToWindow;
     // aim of this var : at the end i have [4,5,X,3]. I want to send 3 4 5. X is an old frame that hasn't been
@@ -286,9 +228,7 @@ void go_back_n_emetteur(char *datas_file_name, uint8_t adress, int CRC) {
         for (int i = 0 ; i < lenToSend ; ++i) {
             currSend = (indexFirstElemWindow + i) % tailleFenetre;
 
-            modifiedFrame = send_through_channel(window[currSend]);
-
-            envoie_reseau(modifiedFrame, physique_port_destination_emi);
+            envoie_reseau(&(window[currSend]), getPhysicalDestEmission());
 
             ++nbOfFrameSent;
         }
@@ -296,14 +236,16 @@ void go_back_n_emetteur(char *datas_file_name, uint8_t adress, int CRC) {
         // if fork's death exit value received before ACK => send window again. ACK.seq_num = -1
 
         // Receives ACK
-        recoit_reseau(ACK);
-        printf("ACK received : %d\n", ACK->seqNum);
-        ++nbOfACKReceived;
+        do {
+            recoit_reseau(&ack);
+            printf("ACK received : %d\n", getNum_seq(ack));
+            ++nbOfACKReceived;
+        } while (!verify_CRC(ack));
 
         /*
             slides the window
         */
-        nbOfChangedFrame = (2 + ACK->seqNum - indexFirstElemWindow + tailleFenetre) % (tailleFenetre + 1);
+        nbOfChangedFrame = (2 + getNum_seq(ack) - indexFirstElemWindow + tailleFenetre) % (tailleFenetre + 1);
         indexFirstElemWindow = (indexFirstElemWindow + nbOfChangedFrame) % tailleFenetre;
         
         receivedFrame += nbOfChangedFrame;
@@ -316,8 +258,8 @@ void go_back_n_emetteur(char *datas_file_name, uint8_t adress, int CRC) {
             changes the received frames
         */
         while (changed < nbOfChangedFrame && indNextFrameToAddToWindow < nbOfFrameToSend) {
-            printf("Paquet n°%d recu\n", window[indLastChanged]->seqNum);
-            window[indLastChanged] = preparedFrames[indNextFrameToAddToWindow++];
+            printf("Paquet n°%d recu, changement de celui-ci\n", getNum_seq(window[indLastChanged]));
+            window[indLastChanged] = framesReadyToBeSent[indNextFrameToAddToWindow++];
             indLastChanged = (indLastChanged + 1) % tailleFenetre;
             ++changed;
         }
@@ -325,24 +267,17 @@ void go_back_n_emetteur(char *datas_file_name, uint8_t adress, int CRC) {
         changed = 0;
     }
     // previent d'avoir fini
+
+    frame_t frameEnd = createFrame(0, N, CON_CLOSE, 0);
     
-    (modifiedFrame->frame)[0] = 0;
-    modifiedFrame->frameSize = 0;
-    modifiedFrame->seqNum = N;
-    while (ACK->seqNum != N && (nbTry < maxTry)) {
-        printf("Je viens d'envoyer : %d\n", modifiedFrame->seqNum);
-        envoie_reseau(modifiedFrame, physique_port_destination_emi);
-        recoit_reseau(ACK);
+    while (getNum_seq(ack) != N && getCommande(ack) != CON_CLOSE_ACK && (nbTry < maxTry)) {
+        printf("Je viens d'envoyer : %d\n", getNum_seq(frameEnd));
+        envoie_reseau(&frameEnd, getPhysicalDestEmission());
+        recoit_reseau(&ack);
         ++nbTry;
     }
 
-    free(modifiedFrame);
-    for (int i = 0 ; i < nbOfFrameToSend ; ++i) {
-        free(preparedFrames[i]);
-        free(frames[i]);
-    }
-    free(preparedFrames);
-    free(frames);
+    free(framesReadyToBeSent);
     time_t tpsFin = time(NULL);
     printf("Fin de la transmission coté emetteur.\n");
     printf("%d trames envoyées au total. %d trames étaient nécessaires.\n", nbOfFrameSent, nbOfFrameToSend);
@@ -369,45 +304,40 @@ void go_back_n_recepteur(void) {
     int nbFrameRecues = 0;
 
     int nbPaq = 100;
-    tSendingFrame *receivedFrames = malloc(sizeof(struct sSendingFrame) * nbPaq);
+    frame_t *receivedFrames = malloc(sizeof(struct frame_s) * nbPaq);
     libereSiDoitEtreLiberer((void **) &receivedFrames, EXIT_FAILURE);
     
     int lastCorrectSeqNum = -1;
 
-    tSendingFrame tmpReceived = createSendingFrame(NULL, N - 1);
+    frame_t tmpReceived = createFrame(0, N - 1, OTHER, 0);
 
     int nbFramesReceived = 0;
     int nbFrameWindowReceived = 0;
 
     int CRC_ok = 1;
 
-    tSendingFrame ACK = malloc(sizeof(struct sSendingFrame));
-    libereSiDoitEtreLiberer((void **) &ACK, EXIT_FAILURE);
-    (ACK->frame)[0] = 0;
-    ACK->seqNum = -1;
+    frame_t ack = createFrame(0, -1, ACK, 0);
 
-    tSendingFrame modifiedACK;
-
-    while (tmpReceived->seqNum != N) { // N => was last frame
+    while (getNum_seq(tmpReceived) != N) { // N => was last frame
         // je recois max tailleFenetre trame OU jusqu'a une erreur
         while (nbFrameWindowReceived < tailleFenetre && CRC_ok) {
-            recoit_reseau(tmpReceived);
-            printf("Just received %d\n", tmpReceived->seqNum);
+            recoit_reseau(&tmpReceived);
+            printf("Just received %d\n", getNum_seq(tmpReceived));
             ++nbFrameRecues;
-            if (tmpReceived->seqNum == N) {
+            if (getNum_seq(tmpReceived) == N) {
                 lastCorrectSeqNum = N;
                 break;
             }
-            CRC_ok = verify_CRC(getFrame(tmpReceived), 1); // TODO
+            CRC_ok = verify_CRC(tmpReceived);
             if (CRC_ok) {
-                receivedFrames[nbFramesReceived] = createSendingFrame(tmpReceived->frame, tmpReceived->seqNum);
+                receivedFrames[nbFramesReceived] = createFrame(getInfo(&tmpReceived), getNum_seq(tmpReceived), getCommande(tmpReceived), getLengthInfo(tmpReceived));
 
-                lastCorrectSeqNum = getNumSeq(tmpReceived);
+                lastCorrectSeqNum = getNum_seq(tmpReceived);
                 ++nbFrameWindowReceived;
                 ++nbFramesReceived;
                 if (nbFramesReceived >= nbPaq) {
                     size_t newSize = nbPaq * 2;
-                    tSendingFrame *tmp = realloc(receivedFrames, newSize * sizeof(*receivedFrames));
+                    frame_t *tmp = realloc(receivedFrames, newSize * sizeof(struct frame_s));
                     if (!tmp) {
                         perror("realloc");
                         exit(EXIT_FAILURE);
@@ -416,51 +346,21 @@ void go_back_n_recepteur(void) {
                     nbPaq = newSize;
                 }
             }
-            changeSeqNum(ACK, lastCorrectSeqNum);
-            modifiedACK = send_through_channel(ACK); // delay or lost
-            printf("ACK envoyé : %d\n", getNumSeq(modifiedACK));
-            envoie_reseau(modifiedACK, physique_port_destination_rcpt);
+            setNum_seq(&ack, lastCorrectSeqNum);
+            envoie_reseau(&ack, getPhysicalDestRcpt());
             ++nbACKSent;
             nbFrameWindowReceived = 0;
         }
     }
-    changeSeqNum(ACK, N);
-    modifiedACK = send_through_channel(ACK); // delay or lost
-    printf("ACK envoyé : %d\n", getNumSeq(modifiedACK));
-    envoie_reseau(modifiedACK, physique_port_destination_rcpt);
+    setNum_seq(&ack, N);
+    envoie_reseau(&ack, getPhysicalDestRcpt());
     
     printf("Fin transmission coté recepteur.\n");
     printf("%d ACK envoyés.\n", nbACKSent);
     printf("%d trames reçues.\n", nbFrameRecues);
     // TODO travail sur les received frames
 
-    for (int i = 0 ; i < nbFramesReceived ; ++i) {
-        free(receivedFrames[i]);
-    }
     free(receivedFrames);
-    free(ACK);
 }
 
-/*
-    Si je suis dans cette fonction c'est que je suis un fils (fork)
-    Mon pere attend un ACK. Si je lui retourne une valeur avant qu'il ait recu l'ack
-    il devra renvoyer sa fenetre d'emission
-*/
-void timer(void) {
-    usleep(getTimeOut());
-    exit(0);
-}
 
-/*
-        lance 2 threads : emetteur et recepteur qui vont communiquer via le canal émulé
-        (canal crée de la latence et des erreurs, réel échange par socket)
-    */
-/*
-int main(int argc, char *argv[]) {
-    (void) argc, (void) argv;
-    srand(time(NULL));
-    
-    
-    return 0;
-}
-*/
