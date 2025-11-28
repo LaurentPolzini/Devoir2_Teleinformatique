@@ -125,7 +125,7 @@ def destuff(message: str) -> str:
                 if stuffed_bit != "0":
                     raise ValueError(
                         "Trame corrompue : bit stuffed différent de '0' "
-                        f"(reçu '{stuffed_bit}' à '{stuffed_index}')"
+                        f"(reçu '{stuffed_bit}' à index '{stuffed_index}')"
                     )
 
                 #si pas d'erruer: on saute le bit stuffed
@@ -228,51 +228,87 @@ def parse_frame_with_crc16(frame_hex: str):
 
 
 
+def crc_bits(bits: str) -> int:
+    """
+    Calcule le CRC-16 CCITT d'une chaîne de bits (0/1).
+    On fait juste un padding en 0 pour arriver à un multiple de 8 bits.
+    """
+    # padding pour multiple de 8
+    padding = (8 - (len(bits) % 8)) % 8
+    bits_padded = bits + "0" * padding
 
+    # conversion bits -> bytes (sans utiliser bits_to_bytes qui veut déjà un multiple de 8)
+    out = bytearray()
+    for i in range(0, len(bits_padded), 8):
+        byte_str = bits_padded[i:i+8]
+        out.append(int(byte_str, 2))
+
+    return crc16_ccitt(bytes(out))
 
 
 if __name__ == "__main__":
-    # test
-    # addr = 0x01
-    # cmd  = 0x02
-    # payload = b"TEST"
-
-    # print("=== ÉMISSION ===")
-    # frame_bits = build_frame_with_crc16(addr, cmd, payload)
-    # print("Trame émise (bits):", frame_bits)
-
-    # print("\n=== RÉCEPTION ===")
-    # #simulation reception
-    # a, c, p = parse_frame_with_crc16(frame_bits)
-    # print("Adresse reçue:", a)
-    # print("Commande reçue:", c)
-    # print("Payload reçu:", p)
     args = sys.argv[1:]
 
-    demande = int(args[0])
+    # Si aucun argument => mode test bit-stuffing + CRC
+    if not args:
+        demande = 3
+    else:
+        demande = int(args[0])
 
-    if (demande == 0):
+    if demande == 0:
         comm = int(args[1])
         numSeq = int(args[2])
         siz = int(args[3])
         crc = int(args[4])
-        if (siz > 0):
+        if siz > 0:
             framed_bits = build_frame_with_crc16(comm, numSeq, siz, crc, bytes.fromhex(args[5]))
         else:
             framed_bits = ""
-
         print(framed_bits)
 
-    if (demande == 1):
+    elif demande == 1:
         coreDatas = bytes.fromhex(args[1])
         print(crc16_ccitt(coreDatas))
-    
-    if demande == 2:
-        command, seq, size, crc, payload = parse_frame_with_crc16(args[1])
 
+    elif demande == 2:
+        command, seq, size, crc, payload = parse_frame_with_crc16(args[1])
         print(f"{command}:{seq}:{size}:{crc}:{payload}")
 
+    elif demande == 3:
+        # === TEST COMPLET BIT-STUFFING + CRC + CORRUPTION ===
+        original_bits = "011111101111101111110111110"
+        print("Flux original :", original_bits)
 
+        stuffed = stuffing(original_bits)
+        print("Après stuffing :", stuffed)
+
+        destuffed = destuff(stuffed)
+        print("Après destuff  :", destuffed)
+
+        crc_orig = crc_bits(original_bits)
+        crc_dest = crc_bits(destuffed)
+        print("CRC(original)  :", crc_orig)
+        print("CRC(destuffed) :", crc_dest)
+
+        # --- Test de corruption d'un bit stuffed ---
+        # On cherche un motif 0 + 5 x '1' + 0 => le 0 final est le bit stuffed
+        motif = "0111110"
+        idx = stuffed.find(motif)
+        if idx != -1:
+            stuffed_list = list(stuffed)
+            stuffed_zero_index = idx + len(motif) - 1  # index du bit stuffed '0'
+            # on corrompt ce bit stuffed (0 -> 1)
+            stuffed_list[stuffed_zero_index] = "1"
+            corrupted = "".join(stuffed_list)
+            print("Trame corrompue :", corrupted)
+
+            try:
+                destuff(corrupted)
+                print("ERREUR : la corruption n'a PAS été détectée !")
+            except ValueError as e:
+                print("Corruption détectée par destuff :", e)
+        else:
+            print("Motif de bit stuffed non trouvé dans la trame (improbable avec cet exemple).")
 
 
     
