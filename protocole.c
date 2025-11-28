@@ -367,6 +367,11 @@ void setInfo(frame_t *frame, uint8_t *datas, size_t lengDatas) {
     }
 }
 
+// for introducing errors.
+void setLengInfo(frame_t *frame, size_t lg) {
+    frame->lg_info = lg;
+}
+
 void setFrameLost(frame_t *frame) {
     frame->num_seq = -1;
     frame->info[0] = 0;

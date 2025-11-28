@@ -10,11 +10,15 @@ int probPerteT = 5;
 int probErreurT = 5;
 int delaiMaxT = 200;
 
+int tailleFenetreT = 7;
+int NT = 8;
+
 void TEST_go_back_n(char *datas_file_name);
 
 frame_t send_through_channel(frame_t envoi) {
     int isLost = rand() % 100;
     frame_t toSend = createFrame(0, getNum_seq(envoi), getCommande(envoi), 0);
+
     if (isLost <= probPerteT) {
         printf("Frame perdu\n");
         return toSend;
@@ -29,13 +33,14 @@ frame_t send_through_channel(frame_t envoi) {
         datasWError[i] = introduceByteError(datas[i], probErreurT); // transform some 1 to 0 or 0 to 1 if error.
     }
 
-    setInfo(&toSend, datasWError, introduceByteError(lgDatas, probErreurT));
+    setInfo(&toSend, datasWError, lgDatas);
     setNum_seq(&toSend, introduceByteError(getNum_seq(envoi), probErreurT));
     setCommande(&toSend, introduceByteError(getCommande(envoi), probErreurT));
+    setLengInfo(&toSend, introduceByteError(lgDatas, probErreurT));
 
     // TODO Error in CRC
 
-    float delai = (rand() % delaiMaxT); // delay is in ms
+    float delai = rand() % delaiMaxT; // delay is in ms
     usleep(delai * 1000); // en microsec
 
     return toSend;
@@ -362,11 +367,79 @@ void testParseFlux(void) {
     cleanPtr((void **) &frame_0_byteSeq);
 }
 
+int isInCurrFrameSent(int deb, int end, int idx) {
+    int i = deb;
+
+    while (1) {
+        if (i == idx)
+            return 1;
+
+        if (i == end)
+            break;
+
+        i = (i + 1) % tailleFenetreT;
+    }
+
+    return 0;
+}
+
+
+int randomACK(frame_t *window, int debWindow, int lastOkACK) {
+    int ind;
+    do {
+        ind = rand() % tailleFenetreT;
+    } while (!isInCurrFrameSent(debWindow, lastOkACK, ind)); 
+
+    return getNum_seq(window[ind]);
+}
+
+void afficheMsgRecu(frame_t *frames, int nbFrames) {
+    printf("\n");
+    for (int i = 0 ; i < nbFrames ; ++i) {
+        printf("%s ", getInfo(&(frames[i])));
+        fflush(stdout);
+    }
+    printf("\n");
+}
+
+int getIndexFromFramSeq(frame_t *window, int nbFrame, int seq) {
+    for (int i = 0 ; i < nbFrame ; ++i) {
+        if (getNum_seq(window[i]) == seq) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 int main(void) {
     srand(time(NULL));
     //testParseFlux();
     //testFrameToCharSeq();
 
+    /*
+    int nbOfFrameToSend = 0;
+    frame_t *framesReadyToBeSent = framesFromFile("test.txt", &nbOfFrameToSend);
+
+    frame_t window[tailleFenetreT];
+    frame_t ack;
+
+    for (int i = 0 ; i < tailleFenetreT && i < nbOfFrameToSend ; ++i) {
+        window[i] = framesReadyToBeSent[i];
+    }
+
+    int indexFirstElemWindow = 0;
+    int lastOKFrame = 3; // 4th frame has an error
+    setNum_seq(&ack, randomACK(window, indexFirstElemWindow, lastOKFrame)); // pourquoi random ?
+    // simule la latence de reponse du recepteur
+
+    printf("Le début de la fenetre est a %d. La derniere trame correcte est %d.\n", indexFirstElemWindow, lastOKFrame);
+    printf("L'ack va jusque %d\n", getNum_seq(ack));
+
+    int indACK = getIndexFromFramSeq(window, tailleFenetreT, getNum_seq(ack));
+    int nbOfChangedFrame = (indACK - indexFirstElemWindow + tailleFenetreT) % tailleFenetreT;
+
+    printf("Il y a donc %d trames qui ont bien été recues.\n", nbOfChangedFrame);
+    */
     TEST_go_back_n("test.txt");
 
     /*
@@ -396,53 +469,7 @@ int main(void) {
 
     return 0;
 }
-int tailleFenetreT = 7;
-int NT = 8;
 
-int isInCurrFrameSent(int deb, int end, int idx) {
-    int i = deb;
-
-    while (1) {
-        if (i == idx)
-            return 1;
-
-        if (i == end)
-            break;
-
-        i = (i + 1) % tailleFenetreT;
-    }
-
-    return 0;
-}
-
-
-int randomACK(frame_t *window, int debWindow, int lastOkACK) {
-    int ind = rand() % tailleFenetreT;
-    
-    while (!isInCurrFrameSent(debWindow, lastOkACK, ind)) {
-        ind = rand() % tailleFenetreT;
-    }
-
-    return getNum_seq(window[ind]);
-}
-
-void afficheMsgRecu(frame_t *frames, int nbFrames) {
-    printf("\n");
-    for (int i = 0 ; i < nbFrames ; ++i) {
-        printf("%s ", getInfo(&(frames[i])));
-        fflush(stdout);
-    }
-    printf("\n");
-}
-
-int getIndexFromFramSeq(frame_t *window, int nbFrame, int seq) {
-    for (int i = 0 ; i < nbFrame ; ++i) {
-        if (getNum_seq(window[i]) == seq) {
-            return i;
-        }
-    }
-    return -1;
-}
 
 void TEST_go_back_n(char *datas_file_name) {
     time_t tpsDeb = time(NULL);
@@ -453,7 +480,7 @@ void TEST_go_back_n(char *datas_file_name) {
 
     int nbOfFrameToSend = 0;
     frame_t *framesReadyToBeSent = framesFromFile(datas_file_name, &nbOfFrameToSend);
-    //printf("I have to send %d frames\n", nbOfFrameToSend);
+    printf("I have to send %d frames\n", nbOfFrameToSend);
 
     frame_t *receivedFrames = malloc(sizeof(frame_t) * nbOfFrameToSend);
     libereSiDoitEtreLiberer((void **) &receivedFrames, EXIT_FAILURE);
@@ -472,23 +499,21 @@ void TEST_go_back_n(char *datas_file_name) {
     int currSend = 0;
 
     frame_t ack;
-    //frame_t modifiedFrame, modifiedACK;
+    frame_t modifiedFrame, modifiedACK;
     ack = createFrame(0x00, -1, ACK, 0);
 
-    int nbOfChangedFrame = indNextFrameToAddToWindow;
+    int nbOfChangedFrame = 0;
     // aim of this var : at the end i have [4,5,X,3]. I want to send 3 4 5. X is an old frame that hasn't been
     // modified since the last of the last frame is frame n°5. I don't want to send X, that's why i have this variable
 
-    int changed = 0;
     int indLastChanged = 0;
 
     int lenToSend = tailleFenetreT;
 
     int lastOKFrame = -1;
 
-
-    //int generatedErrorFrame = 0;
-    //int generatedErrorACK = 0;
+    int generatedErrorFrame = 0;
+    int generatedErrorACK = 0;
 
     while ((receivedFrame < nbOfFrameToSend) && (nbTry < maxTry)) {
         /*
@@ -500,51 +525,42 @@ void TEST_go_back_n(char *datas_file_name) {
         for (int i = 0 ; i < lenToSend ; ++i) {
             currSend = (indexFirstElemWindow + i) % tailleFenetreT;
             
-            //printf("J'envoie : \n");
-            //afficheFrame(&(window[currSend]));
-            /*
-            //modified = send_through_channe_BYTES(&(window[currSend]));
-            do {
-                modifiedFrame = send_through_channel(window[currSend]);
-                if (!verify_CRC(&modifiedFrame)) { // it pains me to do that but it's for the sake of datas
-                    ++generatedErrorFrame;
-                }
-            } while (!verify_CRC(&modifiedFrame));
-
-            */
-            lastOKFrame = currSend;
-            ++nbOfFrameSent;
+            modifiedFrame = send_through_channel(window[currSend]);
+            if (!verify_CRC(&modifiedFrame)) { // it pains me to do that but it's for the sake of datas
+                ++generatedErrorFrame;
+                ++nbTry;
+            } else {
+                lastOKFrame = currSend;
+            }
         }
+        nbOfFrameSent += lenToSend;
         // TODO : fork w/ timer
         // if fork's death exit value received before ACK => send window again. ACK.seq_num = -1
 
-        // Receives ACK (random)
-        setNum_seq(&ack, randomACK(window, indexFirstElemWindow, lastOKFrame));
-        /*
         do {
             setNum_seq(&ack, randomACK(window, indexFirstElemWindow, lastOKFrame));
-            modifiedFrame = send_through_channel(ack);
+            modifiedACK = send_through_channel(ack);
             if (!verify_CRC(&modifiedACK)) {
                 ++generatedErrorACK;
+                ++nbTry;
             }
         } while (!(verify_CRC(&modifiedACK)));
         // finally got a correct ACK
-        */
+        
         ++nbOfACKReceived;
-        //printf("Le recepteur a recu jusqu'a la frame n°%d\n", getNum_seq(ack));
 
         /*
-            slides the window
+            slides the window. Bornes inclusives
         */
-        int indACK = getIndexFromFramSeq(window, tailleFenetreT, getNum_seq(ack));
-        nbOfChangedFrame = (indACK - indexFirstElemWindow + tailleFenetreT) % tailleFenetreT;
-        if (nbOfChangedFrame == 0 && indACK == lastOKFrame) {
-            nbOfChangedFrame = tailleFenetreT;
+        while (getNum_seq(window[indexFirstElemWindow]) != getNum_seq(ack)) {
+            ++nbOfChangedFrame;
+            indexFirstElemWindow = (indexFirstElemWindow + 1) % tailleFenetreT;
         }
-        indexFirstElemWindow = (indexFirstElemWindow + nbOfChangedFrame) % tailleFenetreT;
-        
-        receivedFrame += nbOfChangedFrame;
-
+        if (getNum_seq(window[indexFirstElemWindow]) == getNum_seq(ack)) {
+            ++nbOfChangedFrame;
+            indexFirstElemWindow = (indexFirstElemWindow + 1) % tailleFenetreT;
+        }
+        // sending the same window again
         if (nbOfChangedFrame == 0) {
             ++nbTry;
         }
@@ -552,33 +568,45 @@ void TEST_go_back_n(char *datas_file_name) {
         /*
             changes the received frames
         */
-        while (changed < nbOfChangedFrame && indNextFrameToAddToWindow < nbOfFrameToSend) {
+        for (int i = 0 ; i < nbOfChangedFrame ; ++i) {
             receivedFrames[indRcv++] = window[indLastChanged];
-    
+
             window[indLastChanged] = framesReadyToBeSent[indNextFrameToAddToWindow++];
             indLastChanged = (indLastChanged + 1) % tailleFenetreT;
-            ++changed;
+
+            ++receivedFrame;
         }
 
-        changed = 0;
+        nbOfChangedFrame = 0;
     }
-    // previent d'avoir fini
 
+    /*
+        previent d'avoir fini
+    */
     frame_t frameEnd = createFrame(0, NT, CON_CLOSE, 0);
-    uint8_t *recpt;
-    
-    while (getNum_seq(ack) != NT && getCommande(ack) != CON_CLOSE_ACK && (nbTry < maxTry)) {
-        //printf("J'envoie le paquet de fin de connection : %d\n", getNum_seq(frameEnd));
-        recpt = send_through_channel_byteSeq(getInfo(&frameEnd), getLengthInfo(frameEnd));
-        ++nbTry;
-        if (recpt) {
-            //printf("Le recepteur a recu le paquet de fin de connection\n");
-            setNum_seq(&ack, NT);
+
+    do {
+        modifiedFrame = send_through_channel(frameEnd);
+        if (!verify_CRC(&modifiedFrame)) {
+            ++generatedErrorFrame;
+            ++nbTry;
         }
-        
-    }
-    //printf("Voici l'ensemble des messages recus : \n");
-    //afficheMsgRecu(receivedFrames, nbOfFrameToSend);
+    } while (!verify_CRC(&modifiedFrame));
+    // ca y est, j'ai recu une frame sans erreur
+    do {
+        setNum_seq(&ack, NT);
+        setCommande(&ack, CON_CLOSE_ACK);
+        modifiedACK = send_through_channel(ack);
+        if (!verify_CRC(&modifiedACK)) {
+            ++generatedErrorACK;
+            ++nbTry;
+        }
+    } while (!(verify_CRC(&modifiedACK)));
+    // ca y est, j'ai reussi a prevenir 
+    // l emetteur que j'ai bien recu sa frame de fin de connexion
+
+    printf("Voici l'ensemble des messages recus : \n");
+    afficheMsgRecu(receivedFrames, nbOfFrameToSend);
 
     free(framesReadyToBeSent);
     time_t tpsFin = time(NULL);
@@ -586,7 +614,7 @@ void TEST_go_back_n(char *datas_file_name) {
     printf("Frames envoyées : %d\n", nbOfFrameSent);
     printf("Frames retransmises : %d\n", nbOfFrameSent - nbOfFrameToSend);
     printf("ACK reçus : %d\n", nbOfACKReceived);
-    //printf("%d trames erronées. %d ACK erronés.\n", generatedErrorFrame, generatedErrorACK);
+    printf("%d trames erronées. %d ACK erronés.\n", generatedErrorFrame, generatedErrorACK);
     printf("Durée total de transmission : %fs.\n", difftime(tpsFin, tpsDeb));
 }
 

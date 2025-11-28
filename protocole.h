@@ -73,6 +73,9 @@ void setSomme_ctrl(frame_t *frame, uint16_t ctrl_sum);
 
 void setInfo(frame_t *frame, uint8_t *datas, size_t lengthDatas);
 
+// for introducing errors.
+void setLengInfo(frame_t *frame, size_t lg);
+
 void setFrameLost(frame_t *frame);
 
 frame_t *framesFromFile(char *file_name, int *nbOfFramesCreated);
