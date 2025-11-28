@@ -6,9 +6,9 @@
 #include "protocole.h"
 #include "util.h"
 
-int probPerteT = 0;
-int probErreurT = 0;
-int delaiMaxT = 100;
+int probPerteT = 5;
+int probErreurT = 5;
+int delaiMaxT = 200;
 
 void TEST_go_back_n(char *datas_file_name);
 
