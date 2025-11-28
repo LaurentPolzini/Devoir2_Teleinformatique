@@ -7,11 +7,15 @@
 #define DELIMITER 0x7E // 01111110
 static const size_t DATA_MAX_LEN = 100; // 100 octets est la taille maximale de la trame hors CRC et en tete (donc juste données)
 
+/*
+    DELIMITERS will be put when sending. The frame will be transformed into
+    a sequence of bytes.
+*/
 typedef struct frame_s {
     uint8_t commande;     /* type de paquet, cf. ci-dessous */
     uint8_t num_seq;      /* numéro de séquence */
     uint16_t somme_ctrl;   /* somme de contrôle */
-    uint8_t info[DATA_MAX_LEN + 2];  /* données utiles du paquet + DELIMITERS */
+    uint8_t info[DATA_MAX_LEN];  /* données utiles du paquet */
     size_t lg_info;      /* longueur du champ info */
 } frame_t;
 
@@ -24,8 +28,21 @@ typedef struct frame_s {
 #define CON_CLOSE_ACK 7  /* accusé de réception de la déconnexion */
 #define OTHER         8  /* extensions */
 
+// protocole
 void go_back_n_recepteur(void);
 void go_back_n_emetteur(char *datas_file_name);
+
+//--- Python Calls
+uint8_t *frame_t_to_char_seq(frame_t *frame, size_t *lenFrame);
+
+// Parses the received flux to a frame structure
+frame_t parseFlux(uint8_t *flux, size_t len);
+
+// calculates a CRC from a frame
+uint16_t calculate_CRC(frame_t *frame);
+// recalculate the CRC and compares to the one in the frame
+int verify_CRC(frame_t *frame);
+//--- End Python
 
 frame_t createFrame(uint8_t *datas, uint8_t seqnuM, uint8_t comm, size_t dataLeng);
 
@@ -38,8 +55,12 @@ uint16_t getSomme_ctrl(frame_t frame);
 
 uint8_t *getInfo(frame_t *frame);
 
-uint8_t getLengthInfo(frame_t frame);
+size_t getLengthInfo(frame_t frame);
 
+/*
+    Returns an array of [commande, num_seq, size_data, datas]
+*/
+uint8_t *getCoreFrame(frame_t *frame);
 
 size_t getLengDatas(uint8_t *datas);
 
@@ -56,9 +77,6 @@ void setFrameLost(frame_t *frame);
 
 frame_t *framesFromFile(char *file_name, int *nbOfFramesCreated);
 
-uint16_t calculate_CRC(frame_t frame);
-int verify_CRC(frame_t frame);
-
-void afficheFrame(frame_t frame);
+void afficheFrame(frame_t *frame);
 
 #endif

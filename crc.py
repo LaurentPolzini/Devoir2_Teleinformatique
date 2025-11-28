@@ -1,3 +1,5 @@
+import sys
+
 flag = "01111110" # pour apres, flag a ajouter
 
 def byte_to_bits(b: int) -> str:
@@ -6,17 +8,19 @@ def byte_to_bits(b: int) -> str:
 
 def bytes_to_bits(data: bytes) -> str:
     """Convertit une séquence d'octets en chaîne de bits."""
-    return "".join(byte_to_bits(b) for b in data)
-
+    return "".join(f"{b:08b}" for b in data)
 
 def bits_to_bytes(bits: str) -> bytes:
     """
     Convertit une chaîne de bits ('0'/'1') en bytes.
-    Longueur de bits doit être multiple de 8.
+    Si la longueur n'est pas de 8, erreur
     """
+    #padding = (8 - (len(bits) % 8)) % 8
+    #bits += "0" * padding
     if len(bits) % 8 != 0:
+        print("")
         raise ValueError("Longueur de la chaîne de bits non multiple de 8")
-
+    
     out = bytearray()
     for i in range(0, len(bits), 8):
         byte_str = bits[i:i+8]
@@ -60,7 +64,7 @@ def crc16_ccitt(data: bytes, poly: int = 0x1021, init_value: int = 0xFFFF) -> in
 def stuffing(message: str) -> str:
     #message est u
     
-    print("message:",message)
+    #print("message:",message)
     messageout =[]
     counter = 0
     
@@ -68,6 +72,7 @@ def stuffing(message: str) -> str:
 
     for i in message:
         if i not in ("0", "1"):
+            print("")
             raise ValueError("message doit contenir uniquement '0' et '1'")
         messageout.append(i)
         if i == "1":
@@ -77,7 +82,7 @@ def stuffing(message: str) -> str:
                 counter = 0
         if i == "0":
             counter = 0
-    print("message:",messageout)
+    #print("message:",messageout)
     return "".join(messageout)
 
 
@@ -87,7 +92,7 @@ def destuff(message: str) -> str:
     
     #Retire les bits ajoutés par le bit-stuffing HDLC.
     
-    print("destuff in:",message)
+    #print("destuff in:",message)
     messageout = []
     count_ones = 0
     i = 0
@@ -96,6 +101,7 @@ def destuff(message: str) -> str:
     while i < n:
         b = message[i]
         if b not in ("0", "1"):
+            print("")
             raise ValueError("message doit contenir uniquement '0' et '1'")
 
         #add bit courant a la sortie
@@ -131,23 +137,31 @@ def destuff(message: str) -> str:
             count_ones = 0
 
         i += 1
-    print("destuff out message",messageout)
+    #print("destuff out message",messageout)
     return "".join(messageout)
 
 
 def add_flags(message: str) -> str:#add les flag une fois que stuffed.
-    print("avec flags",flag + message + flag)
+    #print("avec flags",flag + message + flag)
     return flag + message + flag
 
 
-def remove_flags(message: str) -> str:
+def find_last_flag(message: str) -> int:
+    return message.rfind(flag)
     
-    if not message.startswith(flag) or not message.endswith(flag):
-        raise ValueError("flags pas présents, erreur")
-    print("flags enlevés:",message[len(flag):-len(flag)])
-    return message[len(flag):-len(flag)]
 
-def build_frame_with_crc16(address: int, command: int, payload: bytes) -> str:
+def remove_flags(bits: str) -> str:
+    """Retire delimiter flags."""
+    start = bits.find(flag)
+    end = bits.rfind(flag)
+    if start == -1 or end == -1 or end <= start:
+        print("")
+        raise ValueError("Flags not found in frame")
+    return bits[start + len(flag):end]
+
+
+
+def build_frame_with_crc16(command: int, numSeq: int, sizePayLoad: int, crc_builtin: int, payload: bytes) -> str:
     """
     Construit une trame HDLC tel que:
     FLAG | stuffing( bits(header + payload + CRC16) ) | FLAG
@@ -155,13 +169,14 @@ def build_frame_with_crc16(address: int, command: int, payload: bytes) -> str:
     Retourne une chaîne de bits avec flags ajoutés.
     """
     #core = en-tête + données (en bytes)
-    core = bytes([address & 0xFF, command & 0xFF]) + payload
+    core = bytes([command & 0xFF, numSeq & 0xFF, sizePayLoad & 0xFF]) + payload
 
     #CRC-16 sur core
-    crc_value = crc16_ccitt(core)
+    #crc_value = crc16_ccitt(core)
+    #assert(crc_builtin == crc_value)
 
     #Convertir le CRC en 2 octets vu qu'on la comme entier et qu'on veut octets
-    crc_bytes = crc_value.to_bytes(2, byteorder="big")
+    crc_bytes = crc_builtin.to_bytes(2, byteorder="big")
 
     #Ajouter le CRC a la fin du core
     core_with_crc = core + crc_bytes
@@ -178,60 +193,83 @@ def build_frame_with_crc16(address: int, command: int, payload: bytes) -> str:
     return framed_bits
 
 
-def parse_frame_with_crc16(framed_bits: str):
+def parse_frame_with_crc16(frame_hex: str):
     """
-    Prend une trame en bits (avec flags, stuffed),
-    vérifie le CRC, et retourne (address, command, payload) si OK.
-
-    Lève ValueError si CRC invalide ou trame trop courte.
+    frame_hex: hex string received from C
+    Returns: command, seq, size, crc, payload (bytes)
     """
-    #Enlever les flags
-    without_flags = remove_flags(framed_bits)  # bits stuffed, sans flags
-
-    #Destuffing
-    core_bits = destuff(without_flags)         # bits originaux (header+payload+CRC)
-
-    #Bits -> bytes
+    # Convert hex string to bytes
+    framed_bytes = bytes.fromhex(frame_hex)
+    
+    framed_bits = bytes_to_bits(framed_bytes)
+    
+    core_bits = remove_flags(framed_bits)
+    
+    # Destuff
+    core_bits = destuff(core_bits)
+    
+    # Bits to bytes
     core_bytes = bits_to_bytes(core_bits)
+    
+    if len(core_bytes) < 5:
+        print("")
+    
+    # Split header + payload + CRC
+    data_part = core_bytes[:-2]
+    crc_bytes = core_bytes[-2:]
+    crc = int.from_bytes(crc_bytes, byteorder="big")
+    
+    command = data_part[0]
+    seq = data_part[1]
+    size = data_part[2]
+    payload_hex = (data_part[3:]).hex()
+    
+    return command, seq, size, crc, payload_hex
 
-    if len(core_bytes) < 4:
-        # il faut au moins: 1 octet adresse, 1 octet commande, 2 octets CRC
-        raise ValueError("Trame trop courte pour contenir header + CRC")
-
-    #separer la partie data et le CRC recu
-    data_part = core_bytes[:-2]# header + payload
-    received_crc_bytes = core_bytes[-2:]# 2 octets de CRC recus
-    received_crc = int.from_bytes(received_crc_bytes, byteorder="big")
-
-    #Recalcul CRC pr verif
-    computed_crc = crc16_ccitt(data_part)
-
-    if computed_crc != received_crc:
-        raise ValueError(
-            f"CRC invalide: reçu=0x{received_crc:04X}, calculé=0x{computed_crc:04X}"
-        )
-
-    #Extraire adresse, commande, payload
-    address = data_part[0]
-    command = data_part[1]
-    payload = data_part[2:]#bytes
-
-    return address, command, payload
 
 
 if __name__ == "__main__":
     # test
-    addr = 0x01
-    cmd  = 0x02
-    payload = b"TEST"
+    # addr = 0x01
+    # cmd  = 0x02
+    # payload = b"TEST"
 
-    print("=== ÉMISSION ===")
-    frame_bits = build_frame_with_crc16(addr, cmd, payload)
-    print("Trame émise (bits):", frame_bits)
+    # print("=== ÉMISSION ===")
+    # frame_bits = build_frame_with_crc16(addr, cmd, payload)
+    # print("Trame émise (bits):", frame_bits)
 
-    print("\n=== RÉCEPTION ===")
-    #simulation reception
-    a, c, p = parse_frame_with_crc16(frame_bits)
-    print("Adresse reçue:", a)
-    print("Commande reçue:", c)
-    print("Payload reçu:", p)
+    # print("\n=== RÉCEPTION ===")
+    # #simulation reception
+    # a, c, p = parse_frame_with_crc16(frame_bits)
+    # print("Adresse reçue:", a)
+    # print("Commande reçue:", c)
+    # print("Payload reçu:", p)
+    args = sys.argv[1:]
+
+    demande = int(args[0])
+
+    if (demande == 0):
+        comm = int(args[1])
+        numSeq = int(args[2])
+        siz = int(args[3])
+        crc = int(args[4])
+        if (siz > 0):
+            framed_bits = build_frame_with_crc16(comm, numSeq, siz, crc, bytes.fromhex(args[5]))
+        else:
+            framed_bits = ""
+
+        print(framed_bits)
+
+    if (demande == 1):
+        coreDatas = bytes.fromhex(args[1])
+        print(crc16_ccitt(coreDatas))
+    
+    if demande == 2:
+        command, seq, size, crc, payload = parse_frame_with_crc16(args[1])
+
+        print(f"{command}:{seq}:{size}:{crc}:{payload}")
+
+
+
+
+    

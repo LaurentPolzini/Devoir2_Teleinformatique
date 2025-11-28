@@ -28,13 +28,20 @@ void closeChannel(void);
 
 /*
     Envoie via les ports de communication
+
+    Attend une structure frame transformée en une sequence de bytes.
 */
 void envoie_reseau(frame_t *frame, short physicalPortDest);
 
 /*
     Recoit depuis le port d'entree
+
+    Attend une structure de frame. Va parser le flux recu pour l'integrer dans la strucutre
 */
 void recoit_reseau(frame_t *frame);
+
+
+uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz);
 
 
 #endif

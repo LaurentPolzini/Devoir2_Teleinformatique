@@ -10,10 +10,226 @@
 #include "canal.h"
 #include "util.h"
 
-#define POLY 16
+#define PY_GET_FRAME 0
+#define PY_CALC_CRC 1
+#define PY_PARSES_FRAME 2
 
 int N = 8; // 0 à 7. n = 3, N = 2^n
 int tailleFenetre = 7; // window size = N - 1
+
+/*
+    Calcul le CRC 16 sur les données de la trame
+*/
+uint16_t calculate_CRC(frame_t *frame) {
+    uint8_t *core = getCoreFrame(frame);
+    size_t len = getLengthInfo(*frame) + 3; // commande + num_seq + lg_info
+
+    // Convert core[] en hex string
+    char hex[len * 2 + 1];
+    for (size_t i = 0; i < len; i++)
+        sprintf(hex + i * 2, "%02X", core[i]);
+
+    hex[len * 2] = '\0';
+    // Commande Python
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd),
+             "python3 crc.py %d %s", PY_CALC_CRC, hex);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        perror("popen");
+        exit(1);
+    }
+
+    // Python results
+    char buffer[64];
+    if (!fgets(buffer, sizeof(buffer), fp)) {
+        perror("fgets");
+        pclose(fp);
+        exit(1);
+    }
+
+    // Nettoyer la chaîne ('\n')
+    buffer[strcspn(buffer, "\n")] = 0;
+
+    // conversion en 2 octets
+    uint16_t crc_value = (uint16_t) strtol(buffer, NULL, 16);
+
+    //printf("CRC obtenu Python = %hu\n", crc_value);
+
+    pclose(fp);
+    cleanPtr((void **) &core);
+
+    return crc_value;
+}
+
+uint8_t *bits_to_uint8_array(const char *bits, size_t *out_len)
+{
+    if (!bits) return NULL;
+
+    size_t len = strlen(bits);
+
+    // Padding pour aligner à 8 bits
+    size_t padded_len = len;
+    if (padded_len % 8 != 0) {
+        padded_len += 8 - (padded_len % 8);
+    }
+
+    // Copie + padding
+    char *padded = malloc(padded_len + 1);
+    if (!padded) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
+    strcpy(padded, bits);
+    for (size_t i = len; i < padded_len; ++i) {
+        padded[i] = '0';
+    }
+    padded[padded_len] = '\0';
+
+    size_t byte_count = padded_len / 8;
+    uint8_t *out = malloc(byte_count);
+    if (!out) {
+        free(padded);
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
+    for (size_t i = 0; i < byte_count; ++i) {
+        char byte_str[9];
+        memcpy(byte_str, padded + i*8, 8);
+        byte_str[8] = '\0';
+        out[i] = (uint8_t) strtol(byte_str, NULL, 2);
+    }
+
+    free(padded);
+    *out_len = byte_count;
+    return out;
+}
+
+// Converts a frame_t to a byte sequence by calling Python
+uint8_t *frame_t_to_char_seq(frame_t *frame, size_t *lenFrame) {
+    if (!frame) return NULL;
+
+    size_t info_len = getLengthInfo(*frame);
+
+    // Prepare hex payload
+    char hex[info_len * 2 + 1];
+    for (size_t i = 0; i < info_len; i++) {
+        sprintf(hex + i*2, "%02X", getInfo(frame)[i]);
+    }
+    hex[info_len*2] = '\0';
+
+    // Call Python to build HDLC frame with CRC & flags
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd),
+             "python3 crc.py %d %d %d %zu %hu %s",
+             PY_GET_FRAME,
+             getCommande(*frame),
+             getNum_seq(*frame),
+             info_len,
+             getSomme_ctrl(*frame),
+             hex);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        perror("popen");
+        exit(EXIT_FAILURE);
+    }
+
+    char buffer[8192];  // allow large frames
+    if (!fgets(buffer, sizeof(buffer), fp)) {
+        perror("fgets");
+        pclose(fp);
+        exit(EXIT_FAILURE);
+    }
+    pclose(fp);
+
+    buffer[strcspn(buffer, "\n")] = 0; // remove newline
+
+    // Optionally verify CRC locally
+    if (!verify_CRC(frame)) {
+        fprintf(stderr, "Erreur: CRC incorrect pour cette trame\n");
+    }
+
+    size_t frame_len;
+    uint8_t *frame_bytes = bits_to_uint8_array(buffer, &frame_len);
+
+    if (lenFrame) *lenFrame = frame_len;
+    return frame_bytes;
+}
+
+frame_t parseFlux(uint8_t *flux, size_t len) {
+    frame_t frame;
+
+    char hex[SIZE_MAX_FRAME * 2 + 1];
+    size_t actPos = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        actPos += sprintf(hex + actPos, "%02X", flux[i]);
+    }
+    hex[actPos] = '\0';
+
+    char cmd[10000];
+    snprintf(cmd, sizeof(cmd), "python3 crc.py %d %s", PY_PARSES_FRAME, hex);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        perror("popen");
+        exit(1);
+    }
+
+    char output[2000];
+    if (!fgets(output, sizeof(output), fp)) {
+        perror("python output");
+        pclose(fp);
+        exit(1);
+    }
+    pclose(fp);
+
+    // Remove newline
+    output[strcspn(output, "\n")] = 0;
+
+    // parsing into frame structure
+    char *token = strtok(output, ":");
+    frame.commande = (uint8_t) atoi(token);
+
+    token = strtok(NULL, ":");
+    frame.num_seq = (uint8_t) atoi(token);
+
+    token = strtok(NULL, ":");
+    frame.lg_info = (uint8_t) atoi(token);
+
+    token = strtok(NULL, ":");
+    frame.somme_ctrl = (uint16_t) atoi(token);
+
+    token = strtok(NULL, ":"); // hex payload
+    if (!token) {
+        fprintf(stderr, "Python payload missing\n");
+        exit(1);
+    }
+
+    size_t hex_len = strlen(token);
+    if (hex_len % 2 != 0) {
+        fprintf(stderr, "Python payload invalid length\n");
+        exit(1);
+    }
+
+    size_t byte_len = hex_len / 2;
+    if (byte_len != frame.lg_info) {
+        fprintf(stderr, "Python payload length mismatch: expected %zu, got %zu\n",
+                frame.lg_info, byte_len);
+    }
+
+    for (size_t i = 0; i < byte_len && i < DATA_MAX_LEN; i++) {
+        char byteHex[3] = { token[i*2], token[i*2+1], '\0' };
+        frame.info[i] = (uint8_t) strtol(byteHex, NULL, 16);
+    }
+
+    return frame;
+}
+
 
 frame_t createFrame(uint8_t *datas, uint8_t seqnuM, uint8_t comm, size_t dataLeng) {
     frame_t fram;
@@ -21,16 +237,12 @@ frame_t createFrame(uint8_t *datas, uint8_t seqnuM, uint8_t comm, size_t dataLen
         fprintf(stderr, "Trame trop grande !\n");
         exit(EXIT_FAILURE);
     }
-    if (dataLeng > 0) {
-        memcpy(&((fram.info)[1]), datas, dataLeng);
-    }
-    (fram.info)[0] = DELIMITER;
-    (fram.info)[DATA_MAX_LEN - 1] = DELIMITER;
+    setInfo(&fram, datas, dataLeng);
     fram.num_seq = seqnuM;
     fram.lg_info = dataLeng;
     fram.commande = comm;
 
-    fram.somme_ctrl = calculate_CRC(fram);
+    fram.somme_ctrl = calculate_CRC(&fram);
 
     return fram;
 }
@@ -56,12 +268,13 @@ frame_t *framesFromFile(char *file_name, int *nbOfFramesCreated) {
                             ? (totalRead % DATA_MAX_LEN)
                             : DATA_MAX_LEN;
 
-        datas_frac[i] = malloc(chunkSize + 2);
+        datas_frac[i] = malloc(chunkSize);
         libereSiDoitEtreLiberer((void **) &(datas_frac[i]), EXIT_FAILURE);
 
-        memcpy(&(datas_frac[i][1]), &entire_msg[i * DATA_MAX_LEN], chunkSize);
+        memcpy(datas_frac[i], &entire_msg[i * DATA_MAX_LEN], chunkSize);
     }
     frame_t *frames_army = malloc(sizeof(struct frame_s) * nbFrameNecessary);
+    libereSiDoitEtreLiberer((void **) &frames_army, EXIT_FAILURE);
 
     for (int i = 0; i < nbFrameNecessary; ++i) {
         size_t chunkSize = ((i == nbFrameNecessary - 1) && (totalRead % DATA_MAX_LEN))
@@ -100,7 +313,7 @@ uint8_t *getInfo(frame_t *frame) {
     return frame->info;
 }
 
-uint8_t getLengthInfo(frame_t frame) {
+size_t getLengthInfo(frame_t frame) {
     return frame.lg_info;
 }
 
@@ -109,11 +322,26 @@ size_t getLengDatas(uint8_t *datas) {
     if (!datas || datas[0] == 0) {
         return 0;
     }
-    size_t len = 1;
+    size_t len = DATA_MAX_LEN - 1;
 
-    while (datas[len++] != DELIMITER && len < DATA_MAX_LEN);
+    while (datas[len] != DELIMITER && len > 0) {
+        --len;
+    }
 
     return len;  // +1 pour inclure le délimiteur
+}
+
+uint8_t *getCoreFrame(frame_t *frame) {
+    size_t sizeInfo = getLengthInfo(*frame);
+    uint8_t *core = malloc(sizeof(uint8_t) * (3 + sizeInfo));
+    libereSiDoitEtreLiberer((void **) &core, EXIT_FAILURE);
+
+    core[0] = getCommande(*frame);
+    core[1] = getNum_seq(*frame);
+    core[2] = (uint8_t) sizeInfo;
+    memcpy(&(core[3]), getInfo(frame), sizeInfo);
+
+    return core;
 }
 
 //---- SETTERS ----
@@ -147,29 +375,18 @@ void setFrameLost(frame_t *frame) {
 /*
     Affiche les données de la trame
 */
-void afficheFrame(frame_t frame) {
-    printf("Il y a %d octets de données : %s\n", getLengthInfo(frame), getInfo(&frame));
-    printf("Son numéro de commande est %d\n", getCommande(frame));
+void afficheFrame(frame_t *frame) {
+    printf("Il y a %zu octets de données : %s\n", getLengthInfo(*frame), getInfo(frame));
+    printf("Son numéro de commande est %d\n", getCommande(*frame));
     printf("Et son numéro de contrôle est %s.\n", verify_CRC(frame) ? "correct" : "incorrect");
-}
-
-/*
-    Calcul le CRC 16 sur les données de la trame
-*/
-uint16_t calculate_CRC(frame_t frame) {
-    (void) frame;
-    return 0;
 }
 
 /*
     Vérifie le checksum
 */
-int verify_CRC(frame_t frame) {
-    return 1;
-    
-    (void) frame;
+int verify_CRC(frame_t *frame) {
+    return getSomme_ctrl(*frame) == calculate_CRC(frame);
 }
-
 
 /*
     has a window with frames in it.
@@ -227,7 +444,7 @@ void go_back_n_emetteur(char *datas_file_name) {
         }
         for (int i = 0 ; i < lenToSend ; ++i) {
             currSend = (indexFirstElemWindow + i) % tailleFenetre;
-
+            
             envoie_reseau(&(window[currSend]), getPhysicalDestEmission());
 
             ++nbOfFrameSent;
@@ -240,7 +457,7 @@ void go_back_n_emetteur(char *datas_file_name) {
             recoit_reseau(&ack);
             printf("ACK received : %d\n", getNum_seq(ack));
             ++nbOfACKReceived;
-        } while (!verify_CRC(ack));
+        } while (!verify_CRC(&ack));
 
         /*
             slides the window
@@ -298,6 +515,9 @@ void go_back_n_emetteur(char *datas_file_name) {
         // do not accepts frame with seq n° > errored frame
         // puts frame into received frames array
         // sending the ack is just sending the last sequence number received
+
+
+    fenetre d'anticipation de 1
 */
 void go_back_n_recepteur(void) {
     int nbACKSent = 0;
@@ -321,15 +541,18 @@ void go_back_n_recepteur(void) {
     while (getNum_seq(tmpReceived) != N) { // N => was last frame
         // je recois max tailleFenetre trame OU jusqu'a une erreur
         while (nbFrameWindowReceived < tailleFenetre && CRC_ok) {
+            printf("En attente...\n");
             recoit_reseau(&tmpReceived);
-            printf("Just received %d\n", getNum_seq(tmpReceived));
+            printf("J'ai juste recu une frame \n");
+            afficheFrame(&tmpReceived);
+
             ++nbFrameRecues;
             if (getNum_seq(tmpReceived) == N) {
                 lastCorrectSeqNum = N;
                 break;
             }
-            CRC_ok = verify_CRC(tmpReceived);
-            if (CRC_ok) {
+            CRC_ok = verify_CRC(&tmpReceived);
+            if (CRC_ok && (getNum_seq(tmpReceived) == (lastCorrectSeqNum + 1) % N)) {
                 receivedFrames[nbFramesReceived] = createFrame(getInfo(&tmpReceived), getNum_seq(tmpReceived), getCommande(tmpReceived), getLengthInfo(tmpReceived));
 
                 lastCorrectSeqNum = getNum_seq(tmpReceived);
@@ -362,5 +585,6 @@ void go_back_n_recepteur(void) {
 
     free(receivedFrames);
 }
+
 
 
