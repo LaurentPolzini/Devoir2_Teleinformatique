@@ -219,6 +219,9 @@ def parse_frame_with_crc16(framed_bits: str):
     return address, command, payload
 
 
+
+
+
 if __name__ == "__main__":
     # test
     addr = 0x01

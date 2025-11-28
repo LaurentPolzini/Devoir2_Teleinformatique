@@ -7,7 +7,7 @@ flag = "01111110" # pour apres, flag a ajouter
 def stuffing(message: str) -> str:
     #message est u
     
-    print("message:",message)
+    print("message in :",message)
     messageout =[]
     counter = 0
     
@@ -24,7 +24,7 @@ def stuffing(message: str) -> str:
                 counter = 0
         if i == "0":
             counter = 0
-    print("message:",messageout)
+    print("message out:","".join(messageout))
     return "".join(messageout)
 
 
@@ -58,7 +58,7 @@ def destuff(message: str) -> str:
             count_ones = 0
 
         i += 1
-    print("destuff out message",messageout)
+    print("destuff out message","".join(messageout))
     return "".join(messageout)
 
 
@@ -74,6 +74,11 @@ def remove_flags(message: str) -> str:
     print("flags enlevés:",message[len(flag):-len(flag)])
     return message[len(flag):-len(flag)]
 
-test = destuff(stuffing("0101101111110"))
+test = destuff(stuffing("011111101111101111110111110"))
 
 test2 =remove_flags(add_flags(test))
+
+
+
+
+
