@@ -14,8 +14,6 @@
 #include "canal.h"
 #include "protocole.h"
 
-frame_t send_through_channel(frame_t envoi);
-
 short physique_port_local_emi = 2000;
 short physique_port_destination_emi = 2001;
 
@@ -93,6 +91,12 @@ void init(int emission) {
         exit(1);
     }
 
+    int opt = 1; // re-usability
+    if (setsockopt(physique_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt");
+        exit(1);
+    }
+
     adr_locale.sin_port = htons(port_local);
     adr_locale.sin_family = AF_INET;
     adr_locale.sin_addr.s_addr = INADDR_ANY;
@@ -124,7 +128,13 @@ void closeChannel(void) {
 void recoit_reseau(frame_t *frame) {
     int l_data;
 
-    l_data = recvfrom(physique_socket, (char *) frame, sizeof(struct frame_s), 0, NULL, NULL);
+    uint8_t dataReceived[SIZE_MAX_FRAME];
+    l_data = recvfrom(physique_socket, dataReceived, SIZE_MAX_FRAME, 0, NULL, NULL);
+
+    printf("Recu : \n");
+    print_bytes(dataReceived, l_data);
+
+    *frame = parseFlux(dataReceived, l_data);
 
     if (l_data < 0)
     {
@@ -157,16 +167,25 @@ void envoie_reseau(frame_t *frame, short physicalPortDest) {
 
     int l_data;
 
-    *frame = send_through_channel(*frame);
+    size_t lenData;
+    uint8_t *frameIntoBytes = frame_t_to_char_seq(frame, &lenData);
 
-    l_data = sendto(physique_socket, (char *) frame, sizeof(struct frame_s), 0, 
-       (struct sockaddr *)&adresse_dest, l_adr);
+    uint8_t *modifiedFrame = send_through_channel_byteSeq(frameIntoBytes, lenData);
+    printf("Envoie : \n");
+    afficheFrame(frame);
+    printf("Into bytes : \n");
+    print_bytes(modifiedFrame, lenData);
+
+    if (modifiedFrame) {
+        l_data = sendto(physique_socket, modifiedFrame, lenData, 0, 
+        (struct sockaddr *)&adresse_dest, l_adr);
 
 
-    if (l_data < 0) {
-        perror("sendto() n'a pas fonctionnée.");
-        close(physique_socket);
-        exit(1);
+        if (l_data < 0 || l_data < (ssize_t) lenData) {
+            perror("sendto() n'a pas fonctionnée.");
+            close(physique_socket);
+            exit(1);
+        }
     }
     //printf("Frame envoyée\n");
 }
@@ -179,6 +198,7 @@ void envoie_reseau(frame_t *frame, short physicalPortDest) {
     Pas besoin de la taille de la trame que l'on va envoyer : on a le flag de debut et fin qui permettent de delimiter
     mais pour le coup ca fait un passage dans une boucle qui n'aurait pas forcement était necessaire.
 */
+/*
 frame_t send_through_channel(frame_t envoi) {
     int isLost = rand() % 100;
     frame_t toSend = createFrame(0, getNum_seq(envoi), getCommande(envoi), 0);
@@ -207,6 +227,25 @@ frame_t send_through_channel(frame_t envoi) {
 
     return toSend;
 }
+*/
+uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz) {
+    int isLost = rand() % 100;
+    uint8_t *wError = malloc(sizeof(uint8_t) * frameSiz);
+    if (isLost <= probPerte) {
+        printf("Frame perdu\n");
+        return NULL;
+    }
+    
+    for (size_t i = 0 ; i < frameSiz ; ++i) {
+        wError[i] = introduceByteError(envoi[i], probErreur); // transform some 1 to 0 or 0 to 1 if error.
+    }
+
+    float delai = (rand() % delaiMax); // delay is in ms
+    usleep(delai * 1000); // en microsec
+
+    return wError;
+}
+
 /*
 int main(void) {
     srand(time(NULL));

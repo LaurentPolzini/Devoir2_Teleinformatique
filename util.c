@@ -61,3 +61,10 @@ uint8_t introduceByteError(uint8_t x, int probError) {
     }
     return xWerror;
 }
+
+void print_bytes(uint8_t *buf, size_t len) {
+    for (size_t i = 0; i < len; i++)
+        printf("%02X ", buf[i]);
+    printf("\n");
+}
+
