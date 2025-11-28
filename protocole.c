@@ -444,7 +444,7 @@ void go_back_n_emetteur(char *datas_file_name) {
         }
         for (int i = 0 ; i < lenToSend ; ++i) {
             currSend = (indexFirstElemWindow + i) % tailleFenetre;
-            
+
             envoie_reseau(&(window[currSend]), getPhysicalDestEmission());
 
             ++nbOfFrameSent;

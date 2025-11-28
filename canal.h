@@ -4,8 +4,8 @@
 #include <unistd.h>
 #include "protocole.h"
 
-#define SIZE_MAX_FRAME 102 // octets. Data max length = 100. 2 delimiters
-#define SIZE_FILE_MAX 4096 // 10 Ko
+#define SIZE_MAX_FRAME 107 // octets. Data max length = 100. 2 delimiters + header (CRC, command, numSeq)
+#define SIZE_FILE_MAX 10000 // 10 Ko
 
 #define EMISSION 1
 #define RECEPTION 0

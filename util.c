@@ -55,7 +55,7 @@ uint8_t introduceByteError(uint8_t x, int probError) {
     uint8_t xWerror = x;
 
     for (int i = 0; i < 8; i++) {
-        if ((rand() % 100) <= probError) {
+        if ((rand() % 100) < probError - 1) {
             xWerror ^= (1 << i);
         }
     }
