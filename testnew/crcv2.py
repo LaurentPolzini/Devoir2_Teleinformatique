@@ -1,4 +1,7 @@
 import sys
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
 
 flag = "01111110" # pour apres, flag a ajouter
 
@@ -14,7 +17,7 @@ def bits_to_bytes(bits: str) -> bytes:
     """
     Convertit une chaîne de bits ('0'/'1') en bytes.
     Si la longueur n'est pas un multiple de 8, on ajoute du padding '0'
-    à la fin (comme dans bits_to_uint8_array en C).
+    à la fin (car octets)
     """
     # Padding pour aligner à 8 bits
     if len(bits) % 8 != 0:
@@ -54,8 +57,7 @@ def stuffing(message: str) -> str:
 
 def destuff(message: str) -> str:
     
-    #Retire les bits ajoutés par le bit-stuffing HDLC.
-    
+
     #print("destuff in:",message)
     messageout = []
     count_ones = 0
@@ -164,7 +166,7 @@ def crc16_ccitt(data: bytes, poly: int = 0x1021, init_value: int = 0xFFFF) -> in
 
 
 
-#help utils 
+#help utils, note, certains ne sont pas utilisés
 
 def bit_stuffing_for_crc16_test(data: bytes) -> str:
     """
@@ -196,11 +198,11 @@ def crc16_and_stuffing_test(data: bytes) -> None:
     print("Trame après bit-stuffing + flags :", stuffed_frame_bits)
 
 
-# HDLC frame builder using CRC16
+# HDLC frame builder en CRC16
 
 def build_frame_with_crc16(command: int, numSeq: int, sizePayLoad: int, crc_builtin: int, payload: bytes) -> str:
     """
-    Construit une trame HDLC tel que:
+    Construit latrame HDLC tel que:
     FLAG | stuffing( bits(header + payload + CRC16) ) | FLAG
 
     Retourne une chaîne de bits avec flags ajoutés.
@@ -212,7 +214,7 @@ def build_frame_with_crc16(command: int, numSeq: int, sizePayLoad: int, crc_buil
     #crc_value = crc16_ccitt(core)
     #assert(crc_builtin == crc_value)
 
-    #Convertir le CRC en 2 octets vu qu'on la comme entier et qu'on veut octets
+    #Convertir le CRC en 2 octets vu qu'on la comme un entier (int) et qu'on veut octets
     crc_bytes = crc_builtin.to_bytes(2, byteorder="big", signed=False)
 
     #core complet: header + payload + CRC
@@ -230,84 +232,17 @@ def build_frame_with_crc16(command: int, numSeq: int, sizePayLoad: int, crc_buil
     return framed_bits
 
 
-def parse_frame_with_crc16(frame_hex: str):
-    """
-    frame_hex: hex string received from C
-    Returns: command, seq, size, crc, payload (bytes)
-    """
-    # Convert hex string to bytes
-    framed_bytes = bytes.fromhex(frame_hex)
-    
-    framed_bits = bytes_to_bits(framed_bytes)
-    
-    core_bits = remove_flags(framed_bits)
-    
-    # Destuff
-    core_bits = destuff(core_bits)
-    
-    # Bits -> bytes
-    core_with_crc = bits_to_bytes(core_bits)
-    
-    if len(core_with_crc) < 3 + 2:  # 3 bytes header + 2 bytes CRC
-        raise ValueError("Frame too short to contain header + CRC")
-    
-    data = core_with_crc[:-2]          # header + payload
-    crc_recv = int.from_bytes(core_with_crc[-2:], "big")
-    
-    command = data[0]
-    seq = data[1]
-    size = data[2]
-    
-    if len(data) < 3 + size:
-        raise ValueError("Inconsistent size field vs payload length")
-
-    payload = data[3:3+size]
-    
-    core = data[:3+size]
-    crc_calc = crc16_ccitt(core)
-
-    if crc_calc != crc_recv:
-        raise ValueError(f"CRC mismatch: received=0x{crc_recv:04X}, computed=0x{crc_calc:04X}")
-
-    return command, seq, size, crc_recv, payload
 
 
-def parse_frame_high_level(frame_hex: str):
-    """
-    version simplifiee si tu veux juste recuperer payload sans toucher aux details CRC
-    """
-    command, seq, size, crc_recv, payload = parse_frame_with_crc16(frame_hex)
-    return {
-        "command": command,
-        "seq": seq,
-        "size": size,
-        "crc": crc_recv,
-        "payload": payload,
-    }
 
-
-# =====================================================================
-#  API haut niveau pour manipuler des trames HDLC directement en Python
-#  (sans passer par la logique "demande = 0/1/2" utilisée par le code C)
-#
-#  Cette section repose sur les fonctions déjà définies plus haut :
-#  - bytes_to_bits / bits_to_bytes
-#  - stuffing / destuff
-#  - add_flags / remove_flags
-#  - crc16_ccitt
-# =====================================================================
-
-from dataclasses import dataclass
-from typing import Optional, Tuple
 
 @dataclass
 class Frame:
     """
-    Représentation logique d'une trame de liaison.
-
-    commande : int   -> type de trame (ex: 0=DATA, 1=ACK, etc.)
-    num_seq  : int   -> numéro de séquence (0..N-1)
-    info     : bytes -> charge utile (payload)
+    representation d'une trame de liaison.
+    commande: int -> type de trame (ex: 0=DATA, 1=ACK, etc.)
+    num_seq: int-> numéro de séquence (0..N-1)
+    info: bytes ->payload
     """
     commande: int
     num_seq: int
@@ -320,9 +255,8 @@ class Frame:
 
 def core_bytes_from_frame(frame: Frame) -> bytes:
     """
-    Construit la partie "core" d'une trame : en-tête + données (sans CRC).
-    Format:
-        [commande (1 octet)] [num_seq (1 octet)] [lg_info (1 octet)] [payload...]
+    Construit le core d'une trame : header + données (sans CRC).
+    Format:[commande (1 octet)] [num_seq (1 octet)] [lg_info (1 octet)] [payload...]
     """
     if frame.lg_info > 255:
         raise ValueError("lg_info ne peut pas dépasser 255 (1 octet).")
@@ -342,13 +276,13 @@ def compute_crc16_for_frame(frame: Frame) -> int:
 
 def encode_frame_to_bits(frame: Frame) -> str:
     """
-    Encode une Frame en flux de bits HDLC (avec stuffing + flags), sous forme de str.
-    Étapes:
-      1. core = en-tête + données
-      2. CRC-16 sur core (2 octets à la fin)
-      3. conversion en bits
-      4. bit-stuffing HDLC sur (core+CRC)
-      5. ajout des flags 01111110 de part et d'autre
+    encode frame en flux de bits HDLC (avec stuffing + flags), sous forme de string
+    etapes:
+    core = en-tête + données
+    CRC-16 sur core (2 octets à la fin)
+    conversion en bits
+    bit-stuffing HDLC sur (core+CRC)
+    ajout des flags 01111110 de part et d'autre
     """
     core = core_bytes_from_frame(frame)
     crc_value = compute_crc16_for_frame(frame)
@@ -421,118 +355,97 @@ def decode_frame_from_bits(framed_bits: str) -> Frame:
 
 def decode_frame_from_bytes(raw: bytes) -> Frame:
     """
-    Variante pratique : prend des bytes reçus sur le réseau
-    (flags + stuffing + CRC inclus), et renvoie une Frame.
+    prend bytes recus sur le réseau
+    (flags + stuffing + CRC inclus), et renvoie un Frame.
     """
     framed_bits = bytes_to_bits(raw)
     return decode_frame_from_bits(framed_bits)
 
 
-# =====================================================================
-#  Fonctions utilitaires pour tests simples (sans le code C)
-# =====================================================================
-
-def build_bits_frame_from_core(command: int, num_seq: int, payload: bytes) -> str:
-    """
-    Petit helper : à partir de paramètres bruts, produit directement
-    une trame en bits prête à l'envoi (équivalent haut niveau de ce
-    que build_frame_with_crc16 faisait pour le code C).
-    """
-    frame = Frame(commande=command, num_seq=num_seq, info=payload)
-    return encode_frame_to_bits(frame)
 
 
-def parse_bits_frame_to_core(framed_bits: str) -> Tuple[int, int, bytes]:
-    """
-    Inverse de build_bits_frame_from_core, mais retourne seulement
-    (commande, num_seq, payload) en ignorant le CRC (sauf erreur).
-    """
-    frame = decode_frame_from_bits(framed_bits)
-    return frame.commande, frame.num_seq, frame.info
+# if __name__ == "__main__":
+#     args = sys.argv[1:]
 
+#     # Si aucun argument => mode test bit-stuffing + CRC
+#     if not args:
+#         demande = 3
+#     else:
+#         demande = int(args[0])
 
-if __name__ == "__main__":
-    args = sys.argv[1:]
+#     if demande == 0:
+#         comm = int(args[1])
+#         numSeq = int(args[2])
+#         siz = int(args[3])
+#         crc = int(args[4])
+#         if siz > 0:
+#             framed_bits = build_frame_with_crc16(comm, numSeq, siz, crc, bytes.fromhex(args[5]))
+#         else:
+#             framed_bits = ""
+#         print(framed_bits)
 
-    # Si aucun argument => mode test bit-stuffing + CRC
-    if not args:
-        demande = 3
-    else:
-        demande = int(args[0])
+#     elif demande == 1:
+#         coreDatas = bytes.fromhex(args[1])
+#         print(crc16_ccitt(coreDatas))
 
-    if demande == 0:
-        comm = int(args[1])
-        numSeq = int(args[2])
-        siz = int(args[3])
-        crc = int(args[4])
-        if siz > 0:
-            framed_bits = build_frame_with_crc16(comm, numSeq, siz, crc, bytes.fromhex(args[5]))
-        else:
-            framed_bits = ""
-        print(framed_bits)
+#     elif demande == 2:
+#         command, seq, size, crc, payload = parse_frame_with_crc16(args[1])
+#         print(f"{command}:{seq}:{size}:{crc}:{payload}")
 
-    elif demande == 1:
-        coreDatas = bytes.fromhex(args[1])
-        print(crc16_ccitt(coreDatas))
+#     elif demande == 3:
+#         # Exemple rapide de test local (quand on lance `python crc.py` sans argument)
+#         #
+#         # 1) Test stuffing/destuff sur le flux fourni dans l'énoncé
+#         flux_original = "011111101111101111110111110"
+#         print("Flux original :", flux_original)
 
-    elif demande == 2:
-        command, seq, size, crc, payload = parse_frame_with_crc16(args[1])
-        print(f"{command}:{seq}:{size}:{crc}:{payload}")
+#         # Après stuffing
+#         stuffed = stuffing(flux_original)
+#         print("Après stuffing :", stuffed)
 
-    elif demande == 3:
-        # Exemple rapide de test local (quand on lance `python crc.py` sans argument)
-        #
-        # 1) Test stuffing/destuff sur le flux fourni dans l'énoncé
-        flux_original = "011111101111101111110111110"
-        print("Flux original :", flux_original)
+#         # Après destuff
+#         destuffed = destuff(stuffed)
+#         print("Après destuff  :", destuffed)
 
-        # Après stuffing
-        stuffed = stuffing(flux_original)
-        print("Après stuffing :", stuffed)
+#         if destuffed == flux_original:
+#             print("OK : destuff == flux original")
+#         else:
+#             print("ERREUR : destuff != flux original")
 
-        # Après destuff
-        destuffed = destuff(stuffed)
-        print("Après destuff  :", destuffed)
+#         # CRC simple sur un exemple de données
+#         exemple_data = b"Bonjour CRC"
+#         print("\nExemple CRC-16 sur :", exemple_data)
+#         print("CRC-16-CCITT =", hex(crc16_ccitt(exemple_data)))
 
-        if destuffed == flux_original:
-            print("OK : destuff == flux original")
-        else:
-            print("ERREUR : destuff != flux original")
+#         # Test de détection de corruption sur bit stuffed
+#         print("\nTest de corruption sur le bit stuffed :")
+#         # On refait stuffing pour avoir une trame
+#         stuffed_bits = stuffing(flux_original)
+#         print("Trame stuffée :", stuffed_bits)
 
-        # CRC simple sur un exemple de données
-        exemple_data = b"Bonjour CRC"
-        print("\nExemple CRC-16 sur :", exemple_data)
-        print("CRC-16-CCITT =", hex(crc16_ccitt(exemple_data)))
+#         # On cherche l'index du premier bit stuffed (0 après 5 '1')
+#         count_ones = 0
+#         stuffed_zero_index = None
+#         for i, bit in enumerate(stuffed_bits):
+#             if bit == "1":
+#                 count_ones += 1
+#             else:
+#                 if count_ones == 5:
+#                     stuffed_zero_index = i
+#                     break
+#                 count_ones = 0
 
-        # Test de détection de corruption sur bit stuffed
-        print("\nTest de corruption sur le bit stuffed :")
-        # On refait stuffing pour avoir une trame
-        stuffed_bits = stuffing(flux_original)
-        print("Trame stuffée :", stuffed_bits)
+#         if stuffed_zero_index is not None:
+#             # on corrompt ce bit stuffed (0 -> 1)
+#             stuffed_list = list(stuffed_bits)
+#             stuffed_list[stuffed_zero_index] = "1"
+#             corrupted = "".join(stuffed_list)
+#             print("Trame corrompue :", corrupted)
 
-        # On cherche l'index du premier bit stuffed (0 après 5 '1')
-        count_ones = 0
-        stuffed_zero_index = None
-        for i, bit in enumerate(stuffed_bits):
-            if bit == "1":
-                count_ones += 1
-            else:
-                if count_ones == 5:
-                    stuffed_zero_index = i
-                    break
-                count_ones = 0
-
-        if stuffed_zero_index is not None:
-            # on corrompt ce bit stuffed (0 -> 1)
-            stuffed_list = list(stuffed_bits)
-            stuffed_list[stuffed_zero_index] = "1"
-            corrupted = "".join(stuffed_list)
-            print("Trame corrompue :", corrupted)
-
-            try:
-                destuff(corrupted)
-                print("ERREUR : la corruption n'a PAS été détectée !")
-            except ValueError as e:
-                print("Corruption détectée par destuff :", e)
-        else:
-            print("Motif de bit stuffed non trouvé dans la trame (improbable avec cet exemple).")
+#             try:
+#                 destuff(corrupted)
+#                 print("ERREUR : la corruption n'a PAS été détectée !")
+#             except ValueError as e:
+#                 print("Corruption détectée par destuff :", e)
+#         else:
+#             print("Motif de bit stuffed non trouvé dans la trame (improbable avec cet exemple).")

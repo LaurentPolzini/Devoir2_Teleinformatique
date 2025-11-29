@@ -4,43 +4,31 @@ import random
 import sys
 from pathlib import Path
 
-# On réutilise tout le travail de crc.py
+#import crc
 from crcv2 import Frame, encode_frame_to_bytes, decode_frame_from_bytes
 
-# ==========================
-# Constantes du protocole
-# ==========================
 
-LOCALHOST = "127.0.0.1"
+LOCALHOST = "127.0.0.1" 
 
-EMITTER_PORT  = 30000
+EMITTER_PORT  = 30000 #on peut prendre n'importe quoi selon le pc et les prots dispos
 RECEIVER_PORT = 20000
 
-# Types de trame (commande)
-CMD_DATA      = 0
-CMD_ACK       = 1
+#frame type (commandes)
+CMD_DATA = 0
+CMD_ACK = 1
 CMD_CON_CLOSE = 5  # fin de communication
 
-# Paramètres Go-Back-N
-# Ici on simplifie : num_seq est un index de trame sur 1 octet (0..255),
+#settings gobackn
+#num_seq un index de trame sur 1 octet (0..255),
 # donc on peut envoyer jusqu'à 255 trames sans wrap-around.
-N_SEQ        = 256
-WINDOW_SIZE  = 10      # taille de fenêtre raisonnable (< N_SEQ)
-DATA_MAX_LEN = 100     # max 100 octets par trame, comme dans le TP
+N_SEQ  = 256
+WINDOW_SIZE  = 10# taille de fenêtre(< N_SEQ evidemment)
+DATA_MAX_LEN = 100# max 100 octets par trame
+
+#implémentation canal non fiable (erreurs,pertes,délai)
 
 
-# ========================================
-# Canal non fiable (erreurs / pertes / délai)
-# ========================================
 
-def introduce_byte_error(b: int, prob_error: float) -> int:
-    """
-    Flippe des bits dans un octet selon prob_error (probabilité par bit entre 0.0 et 1.0).
-    """
-    for bit in range(8):
-        if random.random() < prob_error:
-            b ^= (1 << bit)
-    return b
 
 
 def send_through_channel(sock: socket.socket,
@@ -50,23 +38,28 @@ def send_through_channel(sock: socket.socket,
                          prob_loss: float,
                          delay_max_ms: int) -> bool:
     """
-    Applique pertes, erreurs et délais puis envoie sur le socket.
+    Canal non fiable simplifié :
 
-    prob_error : proba par bit (ex: 0.01 = 1% par bit)
-    prob_loss  : proba de perdre complètement la trame (0.0..1.0)
-    delay_max_ms : délai max en millisecondes
+    - prob_loss  : probabilité de perdre complètement la trame.
+    - prob_error : probabilité de corrompre la trame en 1 bit.
+                   (0.05 => 5% de trames avec un bit flip)
+    - delay_max_ms : délai max en millisecondes.
     """
-    # Perte
+
+    #trame perdue
     if random.random() < prob_loss:
         # trame perdue, rien envoyé
         return False
 
-    # Erreurs de bits
-    noisy = bytearray()
-    for b in data:
-        noisy.append(introduce_byte_error(b, prob_error))
+    noisy = bytearray(data)
 
-    # Délai
+    #corrupted
+    if random.random() < prob_error and len(noisy) > 0:
+        byte_index = random.randrange(len(noisy))
+        bit_index = random.randint(0, 7)
+        noisy[byte_index] ^= (1 << bit_index)
+
+    #délai
     if delay_max_ms > 0:
         delay = random.randint(0, delay_max_ms)
         time.sleep(delay / 1000.0)
@@ -75,13 +68,12 @@ def send_through_channel(sock: socket.socket,
     return True
 
 
-# ==========================
-# Utilitaires
-# ==========================
+
+#utilities
 
 def split_file_into_frames(path: str) -> list[Frame]:
     """
-    Lit un fichier binaire et le découpe en trames DATA de DATA_MAX_LEN octets max.
+    read un fichier binaire et le coupe en trames DATA de DATA_MAX_LEN octets max.
     num_seq = index de trame (0,1,2,...) tant qu'on ne dépasse pas 255.
     """
     data = Path(path).read_bytes()
@@ -91,7 +83,7 @@ def split_file_into_frames(path: str) -> list[Frame]:
     for i in range(0, len(data), DATA_MAX_LEN):
         chunk = data[i:i + DATA_MAX_LEN]
         if seq >= 256:
-            raise ValueError("Trop de trames pour un num_seq sur 1 octet (>255)")
+            raise ValueError("Trop de trames pour un num_seq sur 1 octet (>255) something went VERY wrong")
         frames.append(Frame(commande=CMD_DATA, num_seq=seq, info=chunk))
         seq += 1
 
@@ -108,7 +100,7 @@ def send_ack(sock: socket.socket,
     Envoie une trame ACK avec num_seq = last_good_seq (ou 255 si aucun).
     """
     if last_good_seq < 0:
-        seq_field = 255  # "aucune trame encore validée"
+        seq_field = 255  #aucune trame encore validée (donc 255 pr etre safe)
     else:
         seq_field = last_good_seq & 0xFF
 
@@ -117,9 +109,7 @@ def send_ack(sock: socket.socket,
     send_through_channel(sock, raw, dest_addr, prob_error, prob_loss, delay_max_ms)
 
 
-# ==========================
-# Go-Back-N : ÉMETTEUR
-# ==========================
+#go back n send (emitter)
 
 def go_back_n_emitter(message_path: str,
                       prob_error: float = 0.0,
@@ -127,12 +117,11 @@ def go_back_n_emitter(message_path: str,
                       delay_max_ms: int = 0,
                       timeout_s: float = 0.3) -> None:
     """
-    Émetteur Go-Back-N :
-
-    - Découpe message_path en trames DATA.
-    - Envoie avec fenêtre glissante.
-    - Gère ACK et retransmissions sur timeout.
-    - Termine avec une trame CON_CLOSE.
+    emitter gobackn:
+    decoupe message_path en trames DATA
+    envoie avec window
+    manage ACK et retransmissions sur timeout
+    close avec une trame CON_CLOSE
     """
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -144,8 +133,8 @@ def go_back_n_emitter(message_path: str,
     frames = split_file_into_frames(message_path)
     total_frames = len(frames)
 
-    base = 0              # index de la première trame non acquittée
-    next_to_send = 0      # index de la prochaine trame à envoyer
+    base = 0 # index de la première trame non acquittée
+    next_to_send = 0 # index de la prochaine trame à envoyer
     send_time: dict[int, float] = {}
 
     nb_sent = 0
@@ -158,21 +147,27 @@ def go_back_n_emitter(message_path: str,
     print(f"[EMETTEUR] Paramètres canal: err={prob_error}, perte={prob_loss}, delaiMax={delay_max_ms} ms\n")
 
     while base < total_frames:
-        # 1) Envoi des nouvelles trames dans la fenêtre
+        #envoi nouvelles trames dans la fenêtre
         while next_to_send < base + WINDOW_SIZE and next_to_send < total_frames:
             frame = frames[next_to_send]
             raw = encode_frame_to_bytes(frame)
+
+            # POV de l'emitter, on a TENTE d'envoyer la trame,
+            # donc on démarre le timer et on compte l'envoi, même si le canal perd la trame.
+            send_time[next_to_send] = time.time()
+            nb_sent += 1
+
             ok = send_through_channel(sock, raw, dest_addr,
-                                      prob_error, prob_loss, delay_max_ms)
+                                    prob_error, prob_loss, delay_max_ms)
+
             if ok:
                 print(f"[EMETTEUR] ENVOI DATA seq={frame.num_seq} (index={next_to_send})")
-                send_time[next_to_send] = time.time()
-                nb_sent += 1
             else:
                 print(f"[EMETTEUR] PERTE (simulation) DATA seq={frame.num_seq}")
+
             next_to_send += 1
 
-        # 2) Tentative de réception d'un ACK
+        # reception ack (try)
         try:
             raw_ack, _ = sock.recvfrom(4096)
         except socket.timeout:
@@ -188,69 +183,71 @@ def go_back_n_emitter(message_path: str,
                     nb_acks += 1
                     ack_seq = ack.num_seq
                     print(f"[EMETTEUR] ACK reçu, last_good_seq={ack_seq}")
-                    # Si ack_seq est dans l'intervalle [base .. total_frames-1],
-                    # on avance le base à ack_seq + 1
+                    #if ack_seq est dans l'intervalle [base .. total_frames-1],
+                    #then on avance le base a ack_seq + 1
                     if 0 <= ack_seq < total_frames and ack_seq >= base:
                         base = ack_seq + 1
-                        # On peut aussi nettoyer les send_time obsolètes
+                        #we can also cleanup les send_time obsoletes
                         for i in list(send_time.keys()):
                             if i < base:
                                 del send_time[i]
 
-        # 3) Gestion du timeout de la trame 'base'
+        #gestion du timeout de la trame 'base'
         if base < next_to_send:
             first_index = base
             t_first = send_time.get(first_index)
             if t_first is not None and (time.time() - t_first) > timeout_s:
                 print(f"[EMETTEUR] TIMEOUT sur index={first_index}, retransmission depuis index={first_index}")
-                # Réémettre toutes les trames de [base .. next_to_send)
+                # resend toutes les trames de [base .. next_to_send)
                 for i in range(base, next_to_send):
                     frame = frames[i]
                     raw = encode_frame_to_bytes(frame)
+
+                    #idem,on considère que la trame est reemise,
+                    #donc on met a jour le timer et les compteurs mme si le canal la perd.
+                    send_time[i] = time.time()
+                    nb_sent += 1
+                    nb_retrans += 1
+
                     ok = send_through_channel(sock, raw, dest_addr,
-                                              prob_error, prob_loss, delay_max_ms)
+                                            prob_error, prob_loss, delay_max_ms)
+
                     if ok:
                         print(f"[EMETTEUR] RE-ENVOI DATA seq={frame.num_seq} (index={i})")
-                        nb_sent += 1
-                        nb_retrans += 1
-                        send_time[i] = time.time()
                     else:
                         print(f"[EMETTEUR] PERTE (simulation) RE-ENVOI DATA seq={frame.num_seq}")
 
-    # 4) Envoi d'une trame de fermeture CON_CLOSE
+    #envoi trame de fermeture CON_CLOSE
     close_frame = Frame(commande=CMD_CON_CLOSE, num_seq=total_frames & 0xFF, info=b"")
     raw_close = encode_frame_to_bytes(close_frame)
     send_through_channel(sock, raw_close, dest_addr,
                          prob_error, prob_loss, delay_max_ms)
     print(f"[EMETTEUR] ENVOI CON_CLOSE seq={close_frame.num_seq}")
-    # On pourrait attendre un ACK final ici, mais pas strictement nécessaire pour les tests.
+    
 
     elapsed = time.time() - t0
     print("\n[EMETTEUR] Terminé.")
-    print(f"  Durée totale        : {elapsed:.3f} s")
-    print(f"  Trames DATA envoyées: {nb_sent}")
-    print(f"  Retransmissions     : {nb_retrans}")
-    print(f"  ACK reçus           : {nb_acks}")
+    print(f"Durée totale        : {elapsed:.3f} s")
+    print(f"Trames DATA envoyées: {nb_sent}")
+    print(f"Retransmissions     : {nb_retrans}")
+    print(f"ACK reçus           : {nb_acks}")
 
     sock.close()
 
 
-# ==========================
-# Go-Back-N : RECEPTEUR
-# ==========================
+#receiver gobackn
 
 def go_back_n_receiver(output_path: str,
                        prob_error: float = 0.0,
                        prob_loss: float = 0.0,
                        delay_max_ms: int = 0) -> None:
     """
-    Récepteur Go-Back-N :
-
-    - Reçoit des trames DATA dans l’ordre.
-    - Vérifie CRC.
-    - Rejette les trames hors ordre ou corrompues.
-    - Concatène les payload dans output_path.
-    - Envoie des ACK avec last_good_seq.
+    receiver gobackn :
+    receive trames DATA dans l’ordre
+    check/verif crc
+    reject trames pas dans l'ordre ou corrupted
+    massemble les payload dans output_path
+    send des ACK avec last_good_seq
     """
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -269,21 +266,26 @@ def go_back_n_receiver(output_path: str,
     nb_data_corrupted = 0
     nb_ack_sent = 0
 
-    # On se souvient de l'adresse de l'émetteur dès la première trame
     emitter_addr = None
 
+
     while True:
-        raw, addr = sock.recvfrom(4096)
+        try:
+            raw, addr = sock.recvfrom(4096)
+        except ConnectionResetError:
+            print("[RECEPTEUR] Err: 'Connexion réinitialisée par l'hôte distant',graceful ending")
+            break
+
         if emitter_addr is None:
             emitter_addr = addr
 
-        # Tente de décoder la trame
+        #try de décoder la trame
         try:
             frame = decode_frame_from_bytes(raw)
         except Exception as e:
             print(f"[RECEPTEUR] Trame corrompue/destuff/CRC invalide: {e}")
             nb_data_corrupted += 1
-            # On renvoie quand même un ACK du dernier bon
+            #renvoie quand même un ACK du dernier bon
             send_ack(sock, emitter_addr, last_good_seq,
                      prob_error, prob_loss, delay_max_ms)
             nb_ack_sent += 1
@@ -291,7 +293,7 @@ def go_back_n_receiver(output_path: str,
 
         if frame.commande == CMD_CON_CLOSE:
             print(f"[RECEPTEUR] Reçu CON_CLOSE seq={frame.num_seq}, fermeture.")
-            # On envoie un dernier ACK
+            #envoie un dernier ACK
             send_ack(sock, emitter_addr, last_good_seq,
                      prob_error, prob_loss, delay_max_ms)
             nb_ack_sent += 1
@@ -300,56 +302,50 @@ def go_back_n_receiver(output_path: str,
         if frame.commande == CMD_DATA:
             print(f"[RECEPTEUR] Reçu DATA seq={frame.num_seq}, attendu={next_expected_seq}")
             if frame.num_seq == next_expected_seq:
-                # Trame dans l'ordre, CRC déjà validé par decode_frame_from_bytes
+                #trame dans l'ordre, CRC déjà validé par decode_frame_from_bytes
                 data_chunks.append(frame.info)
                 last_good_seq = frame.num_seq
                 next_expected_seq += 1
                 nb_data_ok += 1
             else:
-                # Trame hors ordre, on l'ignore (GBN)
+                #trame pas dans l'ordre, on l'ignore car gobackn
                 print(f"[RECEPTEUR] Trame hors ordre (reçue seq={frame.num_seq}, attendu={next_expected_seq}), ignorée.")
 
-            # Envoie ACK du dernier bon
+            #send ACK du dernier bon
             send_ack(sock, emitter_addr, last_good_seq,
                      prob_error, prob_loss, delay_max_ms)
             nb_ack_sent += 1
         else:
             print(f"[RECEPTEUR] Trame avec commande inconnue/ignorée: {frame.commande}")
 
-    # Écriture du fichier recomposé
+    #write le fichier recomposé
     Path(output_path).write_bytes(b"".join(data_chunks))
 
     elapsed = time.time() - t0
     print("\n[RECEPTEUR] Terminé.")
-    print(f"  Durée totale         : {elapsed:.3f} s")
-    print(f"  Trames DATA correctes: {nb_data_ok}")
-    print(f"  Trames corrompues    : {nb_data_corrupted}")
-    print(f"  ACK envoyés          : {nb_ack_sent}")
+    print(f"Durée totale         : {elapsed:.3f} s")
+    print(f"Trames DATA correctes: {nb_data_ok}")
+    print(f"Trames corrompues    : {nb_data_corrupted}")
+    print(f"ACK envoyés          : {nb_ack_sent}")
 
     sock.close()
 
 
-# ==========================
-# MAIN (ligne de commande)
-# ==========================
-
+#main
 def main():
     """
     Usage:
+    pour récepteur :
+    python protocole_py.py recv output.txt [err] [loss] [delay_ms]
 
-      Récepteur :
-        python protocole_py.py recv output.txt [err] [loss] [delay_ms]
+    emetteur :
+    python protocole_py.py send message.txt [err] [loss] [delay_ms] [timeout_s]
 
-      Émetteur :
-        python protocole_py.py send message.txt [err] [loss] [delay_ms] [timeout_s]
-
-    Exemples simples (canal parfait):
-
-      # Terminal 1 (récepteur)
-      python protocole_py.py recv output.txt
-
-      # Terminal 2 (émetteur)
-      python protocole_py.py send test.txt
+    Ex: (canal parfait, default):
+    # Terminal 1 (récepteur)
+    python protocole_py.py recv output.txt
+    # Terminal 2 (émetteur)
+    python protocole_py.py send test.txt
     """
     if len(sys.argv) < 2:
         print(main.__doc__)
@@ -357,14 +353,15 @@ def main():
 
     role = sys.argv[1]
 
-    # Paramètres par défaut du canal
+    #default settings du canal
     prob_error = 0.0
     prob_loss  = 0.0
     delay_ms   = 0
 
+    #on est receveur ou sender
     if role == "recv":
         if len(sys.argv) < 3:
-            print("Usage: python protocole_py.py recv output.txt [err] [loss] [delay_ms]")
+            print("Args pas corrects, usage: python protocole_py.py recv output.txt [err] [loss] [delay_ms]")
             return
         output_path = sys.argv[2]
         if len(sys.argv) > 3:
@@ -378,7 +375,7 @@ def main():
 
     elif role == "send":
         if len(sys.argv) < 3:
-            print("Usage: python protocole_py.py send message.txt [err] [loss] [delay_ms] [timeout_s]")
+            print("Args pas corrects, usage: python protocole_py.py send message.txt [err] [loss] [delay_ms] [timeout_s]")
             return
         message_path = sys.argv[2]
         timeout_s = 0.3
@@ -394,7 +391,7 @@ def main():
         go_back_n_emitter(message_path, prob_error, prob_loss, delay_ms, timeout_s)
 
     else:
-        print("Rôle inconnu. Utilise 'send' ou 'recv'.")
+        print("role invalide, utiliser send ou recv")
         print(main.__doc__)
 
 
