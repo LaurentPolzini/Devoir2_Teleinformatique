@@ -13,4 +13,6 @@ uint8_t introduceByteError(uint8_t x, int probError);
 
 void print_bytes(uint8_t *buf, size_t len);
 
+double now_ms(void);
+
 #endif

@@ -198,12 +198,12 @@ void envoie_reseau(frame_t *frame, short physicalPortDest) {
     Pas besoin de la taille de la trame que l'on va envoyer : on a le flag de debut et fin qui permettent de delimiter
     mais pour le coup ca fait un passage dans une boucle qui n'aurait pas forcement était necessaire.
 */
-/*
+
 frame_t send_through_channel(frame_t envoi) {
     int isLost = rand() % 100;
     frame_t toSend = createFrame(0, getNum_seq(envoi), getCommande(envoi), 0);
     if (isLost <= probPerte) {
-        printf("Frame perdu\n");
+        printf("Frame perdue\n");
         return toSend;
     }
 
@@ -227,7 +227,7 @@ frame_t send_through_channel(frame_t envoi) {
 
     return toSend;
 }
-*/
+
 uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz) {
     int isLost = rand() % 100;
     uint8_t *wError = malloc(sizeof(uint8_t) * frameSiz);
@@ -246,24 +246,28 @@ uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz) {
     return wError;
 }
 
-/*
+
 int main(void) {
     srand(time(NULL));
 
-    pid_t pidFils = -1;
-    switch (pidFils = fork()) {
-        case -1:
-            printf("Error\n");
-            exit(1);
-        case 0:
-            init(RECEPTION);
-            go_back_n_recepteur();
-            exit(EXIT_SUCCESS);
-        default:
-            init(EMISSION);
-            go_back_n_emetteur("test.txt");
-            waitpid(pidFils, NULL, 0);
-    }
-    exit(EXIT_SUCCESS);
+    protocole_go_back_n("test.txt");
+
+    // pid_t pidFils = -1;
+    // switch (pidFils = fork()) {
+    //     case -1:
+    //         printf("Error\n");
+    //         exit(1);
+    //     case 0:
+    //         init(RECEPTION);
+    //         go_back_n_recepteur();
+    //         exit(EXIT_SUCCESS);
+    //     default:
+    //         init(EMISSION);
+    //         go_back_n_emetteur("test.txt");
+    //         waitpid(pidFils, NULL, 0);
+    // }
+    // exit(EXIT_SUCCESS);
+
+    return 0;
 }
-*/
+

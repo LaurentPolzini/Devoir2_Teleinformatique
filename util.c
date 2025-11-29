@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <sys/time.h>
 
 #include "util.h"
 #include "canal.h"
@@ -68,3 +69,11 @@ void print_bytes(uint8_t *buf, size_t len) {
     printf("\n");
 }
 
+/*
+    time in ms
+*/
+double now_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+}

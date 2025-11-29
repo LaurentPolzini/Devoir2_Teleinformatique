@@ -29,6 +29,8 @@ typedef struct frame_s {
 #define OTHER         8  /* extensions */
 
 // protocole
+void protocole_go_back_n(char *datas_file_name);
+// non fonctionnels.
 void go_back_n_recepteur(void);
 void go_back_n_emetteur(char *datas_file_name);
 
@@ -63,6 +65,21 @@ size_t getLengthInfo(frame_t frame);
 uint8_t *getCoreFrame(frame_t *frame);
 
 size_t getLengDatas(uint8_t *datas);
+
+//---- COMPARATORS ----
+int array_frames_equals(frame_t *sent, frame_t *received, int nbFrames);
+
+int compareFrames(frame_t *sent, frame_t *received);
+
+int compareCommande(frame_t sent, frame_t received);
+
+int compareNumSeq(frame_t sent, frame_t received);
+
+int compareCtrlSum(frame_t sent, frame_t received);
+
+int compareLg(frame_t sent, frame_t received);
+
+int compareInfos(frame_t *sent, frame_t *received);
 
 //---- SETTERS ----
 void setCommande(frame_t *frame, uint8_t comm);

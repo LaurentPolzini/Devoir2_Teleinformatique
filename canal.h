@@ -40,6 +40,7 @@ void envoie_reseau(frame_t *frame, short physicalPortDest);
 */
 void recoit_reseau(frame_t *frame);
 
+frame_t send_through_channel(frame_t envoi);
 
 uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz);
 
