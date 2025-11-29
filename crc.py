@@ -1,5 +1,19 @@
 import sys
 
+class Frame:
+    def __init__(self, commande: int, num_seq: int, info: bytes):
+        self.commande = commande      # ex: 0=DATA, 1=ACK...
+        self.num_seq = num_seq        # 0..N-1
+        self.info = info              # payload
+        self.lg_info = len(info)      # <= 100
+        self.crc = 0                  # rempli après calcul
+
+def core_bytes(frame: Frame) -> bytes:
+    header = bytes([frame.commande, frame.num_seq, frame.lg_info])
+    return header + frame.info        # CRC ajouté ensuite
+
+
+
 flag = "01111110" # pour apres, flag a ajouter
 
 def byte_to_bits(b: int) -> str:
