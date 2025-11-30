@@ -41,10 +41,12 @@ uint8_t *frame_t_to_char_seq(frame_t *frame, size_t *lenFrame);
 frame_t parseFlux(uint8_t *flux, size_t len);
 
 // calculates a CRC from a frame
-uint16_t calculate_CRC(frame_t *frame);
-// recalculate the CRC and compares to the one in the frame
-int verify_CRC(frame_t *frame);
+uint16_t calculate_CRC_python(frame_t *frame);
+
+int verify_CRC(frame_t *frame, uint16_t attendu);
 //--- End Python
+
+uint16_t calculate_CRC(const uint8_t *data, size_t len);
 
 frame_t createFrame(uint8_t *datas, uint8_t seqnuM, uint8_t comm, size_t dataLeng);
 
@@ -98,5 +100,9 @@ void setFrameLost(frame_t *frame);
 frame_t *framesFromFile(char *file_name, int *nbOfFramesCreated);
 
 void afficheFrame(frame_t *frame);
+
+uint8_t *frame_to_bytes_stuffed(frame_t *frame, size_t *lenConvertedFrame);
+
+frame_t bytesToFrame_destuffed(uint8_t *bytes, size_t lenBytes, uint16_t *realCRC);
 
 #endif

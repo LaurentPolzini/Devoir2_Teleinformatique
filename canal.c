@@ -24,8 +24,8 @@ int physique_socket;
 
 char destination[10] = "localhost";
 
-int probErreur = -1;
-int probPerte = -1;
+int probErreur = 5;
+int probPerte = 3;
 int delaiMax = 10;
 
 int timeout = 20;
@@ -230,10 +230,10 @@ frame_t send_through_channel(frame_t envoi) {
 
 uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz) {
     int isLost = rand() % 100;
-    uint8_t *wError = malloc(sizeof(uint8_t) * frameSiz);
+    uint8_t *wError = calloc(frameSiz, sizeof(uint8_t));
     if (isLost <= probPerte) {
-        printf("Frame perdu\n");
-        return NULL;
+        printf("Frame perdue\n");
+        return wError;
     }
     
     for (size_t i = 0 ; i < frameSiz ; ++i) {

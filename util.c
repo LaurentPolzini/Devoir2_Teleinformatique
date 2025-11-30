@@ -53,10 +53,13 @@ void file_to_bytes(char *datas_file_name, size_t *total_read, uint8_t *entire_ms
     Introduces errors in a byte
 */
 uint8_t introduceByteError(uint8_t x, int probError) {
+    if (probError == 0) {
+        return x;
+    }
     uint8_t xWerror = x;
 
     for (int i = 0; i < 8; i++) {
-        if ((rand() % 100) < probError - 1) {
+        if ((rand() % 100) < probError) {
             xWerror ^= (1 << i);
         }
     }

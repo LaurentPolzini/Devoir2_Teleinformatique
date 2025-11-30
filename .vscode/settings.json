@@ -7,6 +7,7 @@
         "select.h": "c",
         "protocole.h": "c",
         "time.h": "c",
-        "canal.h": "c"
+        "canal.h": "c",
+        "execution": "c"
     }
 }
