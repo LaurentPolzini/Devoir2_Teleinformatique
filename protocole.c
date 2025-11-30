@@ -21,28 +21,6 @@ int timedOut = 0;
 int N = 8; // 0 à 7. n = 3, N = 2^n
 int tailleFenetre = 7; // window size = N - 1
 
-uint16_t calculate_CRC(const uint8_t *data, size_t len) {
-    if (!data || len == 0) {
-        return 0;
-    }
-    uint16_t crc = 0xFFFF; 
-    uint16_t poly = 0x1021;
-
-    for (size_t i = 0; i < len; i++) {
-        crc ^= (uint16_t)(data[i] << 8);
-        
-        for (int b = 0; b < 8; b++) {
-            if (crc & 0x8000) {
-                crc = (crc << 1) ^ poly;
-            } else {
-                crc = (crc << 1);
-            }
-            crc &= 0xFFFF;
-        }
-    }
-    return crc;
-}
-
 /*
     Associe les paramètres aux champs d'une nouvelle trame
 */
@@ -252,8 +230,9 @@ void setLengInfo(frame_t *frame, size_t lg) {
 }
 
 void setFrameLost(frame_t *frame) {
-    frame->num_seq = -1;
-    frame->info[0] = 0;
+    frame->num_seq = UINT8_MAX;
+    frame->commande = OTHER;
+    frame->lg_info = 0;
 }
 
 /*
@@ -278,6 +257,28 @@ int isLost(frame_t frame) {
 int verify_CRC(frame_t *frame, uint16_t attendu) {
     return getCommande(*frame) != OTHER &&
      getSomme_ctrl(*frame) == attendu;
+}
+
+uint16_t calculate_CRC(const uint8_t *data, size_t len) {
+    if (!data || len == 0) {
+        return 0;
+    }
+    uint16_t crc = 0xFFFF; 
+    uint16_t poly = 0x1021;
+
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)(data[i] << 8);
+        
+        for (int b = 0; b < 8; b++) {
+            if (crc & 0x8000) {
+                crc = (crc << 1) ^ poly;
+            } else {
+                crc = (crc << 1);
+            }
+            crc &= 0xFFFF;
+        }
+    }
+    return crc;
 }
 
 static inline void write_bit(uint8_t *out, size_t *byteIndex, int *bitIndex, int bit) {
@@ -495,7 +496,7 @@ void protocole_go_back_n(char *datas_file_name) {
     int nbOfFrameToSend = 0;
     frame_t ack;
     frame_t *framesReadyToBeSent = framesFromFile(datas_file_name, &nbOfFrameToSend);
-    printf("I have to send %d frames\n", nbOfFrameToSend);
+    printf("I have to send %d frames.\n\n", nbOfFrameToSend);
 
     frame_t *receivedFrames = malloc(sizeof(frame_t) * nbOfFrameToSend);
     libereSiDoitEtreLiberer((void **) &receivedFrames, EXIT_FAILURE);
@@ -559,7 +560,7 @@ void protocole_go_back_n(char *datas_file_name) {
             free(ACK_frameThroughChannel);
             
             if (isLost(modifiedFrame)) {
-                printf("trame perdue\n");
+                printf("    Trame perdue\n");
                 ++nbLostFrames;
                 break;
             }   
@@ -572,13 +573,16 @@ void protocole_go_back_n(char *datas_file_name) {
         
             lastOKFrame = currSend;
         }
+        // if : erreur dès la premiere trame
         if (lastOKFrame == UINT8_MAX) {
             ack = createFrame(0, UINT8_MAX, ACK, 0); // ack de la derniere trame
             printf("%fs - Erreur dans la trame recue... attente de renvoie de l'emetteur\n", (now_ms() - tpsDeb) / 1000);
             timedOut = 1;
         } else {
             // au moins une trame correctement recue
+            //ack = createFrame(0, randomACK(window, indexFirstElemWindow, lastOKFrame), ACK, 0); // recpt + rapide qu'emetteur
             ack = createFrame(0, getNum_seq(window[lastOKFrame]), ACK, 0); // ack de la derniere trame
+            
             printf("%fs - Envoie ACK n°%hhu...\n", (now_ms() - tpsDeb) / 1000, getNum_seq(ack));
             convertedFrame_t = frame_to_bytes_stuffed(&ack, &lnConverted);
 
@@ -591,7 +595,7 @@ void protocole_go_back_n(char *datas_file_name) {
 
             if (finTimer - debTimer >= getTimeOut()) {
                 timedOut = 1;
-                printf("Time out !\n");
+                printf("    Time out !\n");
             }
 
             if (!(isLost(modifiedACK) || timedOut)) {
@@ -599,11 +603,11 @@ void protocole_go_back_n(char *datas_file_name) {
             }
 
             if (isLost(modifiedACK)) {
-                printf("ack perdu\n");
+                printf("    ACK perdu\n");
                 ++nbLostAck;
             } else {
                 if (!verify_CRC(&modifiedACK, realCRC)) {
-                    printf("crc de l'ack incorrect\n");
+                    printf("    Le CRC-16 de l'ACK est incorrect\n");
                     ++generatedErrorACK;
                 }
             }
@@ -612,7 +616,7 @@ void protocole_go_back_n(char *datas_file_name) {
         /*
             slides the window. Bornes inclusives
 
-            Slides if CRC ok and not lost
+            Slides if CRC ok, not lost and not timed out
         */
         if (verify_CRC(&modifiedACK, realCRC) && !isLost(modifiedACK) && !timedOut) {
             printf("%fs - ACK recu n°%hhu...\n", (now_ms() - tpsDeb) / 1000, getNum_seq(modifiedACK));
@@ -655,7 +659,8 @@ void protocole_go_back_n(char *datas_file_name) {
     }
 
     /*
-        previent d'avoir fini
+        previent d'avoir fini - répétition de la boucle de code au dessus- prend beaucoup de place,
+        reste en commentaire
     */
    /*
     frame_t frameEnd = createFrame(0, N, CON_CLOSE, 0);
@@ -688,22 +693,24 @@ void protocole_go_back_n(char *datas_file_name) {
             ++nbTry;
         }
     } while (!verify_CRC(&modifiedACK, realCRC));
-     */
-    printf("%fs Reception, terminaison de la connexion...\n", (now_ms() - tpsDeb) / 1000);
+    printf("%fs Reception, terminaison de la connexion...\n", (now_ms() - tpsDeb) / 1000); 
+    */
     // ca y est, j'ai reussi a prevenir 
     // l emetteur que j'ai bien recu sa frame de fin de connexion
 
-    printf("Voici l'ensemble des messages recus : \n");
-    afficheMsgRecu(receivedFrames, nbOfFrameToSend);
 
     double tpsFin = now_ms();
     printf("Transmission terminée. La réception est %s de l'emission\n", array_frames_equals(receivedFrames, framesReadyToBeSent, nbOfFrameToSend) ? "egale" : "differente");
+    printf("\nVoici l'ensemble des messages recus : \n");
+    afficheMsgRecu(receivedFrames, nbOfFrameToSend);
+    
+    printf("\n\n/------ Statistiques ------\n");
     printf("Frames envoyées : %d\n", nbOfFrameSent);
     printf("Frames retransmises : %d\n", nbOfFrameSent - nbOfFrameToSend);
     printf("ACK reçus : %d\n", nbOfACKReceived);
     printf("%d trames erronées. %d ACK erronés.\n", generatedErrorFrame, generatedErrorACK);
     printf("%d trames perdues. %d ACK perdus.\n", nbLostFrames, nbLostAck);
-    printf("Durée totale de transmission : %fs.\n", (tpsFin - tpsDeb) / 1000);
+    printf("Durée totale de transmission : %fs.\n\n", (tpsFin - tpsDeb) / 1000);
 
     free(framesReadyToBeSent);
     free(convertedFrame_t);

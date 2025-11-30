@@ -10,6 +10,28 @@
 #define EMISSION 1
 #define RECEPTION 0
 
+// getters on channel parameters
+int getTimeOut(void);
+
+int getProbErr(void);
+
+int getProbLost(void);
+
+int getDelay(void);
+
+// setters
+void setPrbErr(int prbErr);
+
+void setPrbLst(int prbLst);
+
+void setDelay(int delay);
+
+
+// simulation du canal : introduit de la perte, des erreurs et du delay
+uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz);
+
+
+/// ------- for real channel with a socket, not in use anymore
 /*
     Few getters on channel information
 */
@@ -41,8 +63,5 @@ void envoie_reseau(frame_t *frame, short physicalPortDest);
 void recoit_reseau(frame_t *frame);
 
 frame_t send_through_channel(frame_t envoi);
-
-uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz);
-
 
 #endif

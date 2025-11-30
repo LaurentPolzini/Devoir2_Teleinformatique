@@ -30,21 +30,8 @@ typedef struct frame_s {
 
 // protocole
 void protocole_go_back_n(char *datas_file_name);
-// non fonctionnels.
-void go_back_n_recepteur(void);
-void go_back_n_emetteur(char *datas_file_name);
-
-//--- Python Calls
-uint8_t *frame_t_to_char_seq(frame_t *frame, size_t *lenFrame);
-
-// Parses the received flux to a frame structure
-frame_t parseFlux(uint8_t *flux, size_t len);
-
-// calculates a CRC from a frame
-uint16_t calculate_CRC_python(frame_t *frame);
 
 int verify_CRC(frame_t *frame, uint16_t attendu);
-//--- End Python
 
 uint16_t calculate_CRC(const uint8_t *data, size_t len);
 
@@ -92,7 +79,7 @@ void setSomme_ctrl(frame_t *frame, uint16_t ctrl_sum);
 
 void setInfo(frame_t *frame, uint8_t *datas, size_t lengthDatas);
 
-// for introducing errors.
+
 void setLengInfo(frame_t *frame, size_t lg);
 
 void setFrameLost(frame_t *frame);
@@ -104,5 +91,22 @@ void afficheFrame(frame_t *frame);
 uint8_t *frame_to_bytes_stuffed(frame_t *frame, size_t *lenConvertedFrame);
 
 frame_t bytesToFrame_destuffed(uint8_t *bytes, size_t lenBytes, uint16_t *realCRC);
+
+
+
+//---- deprecated
+// old protocols, non fonctionnels.
+void go_back_n_recepteur(void);
+void go_back_n_emetteur(char *datas_file_name);
+
+//--- Python Calls
+uint8_t *frame_t_to_char_seq(frame_t *frame, size_t *lenFrame);
+
+// Parses the received flux to a frame structure
+frame_t parseFlux(uint8_t *flux, size_t len);
+
+// calculates a CRC from a frame
+uint16_t calculate_CRC_python(frame_t *frame);
+//--- End Python
 
 #endif

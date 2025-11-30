@@ -46,3 +46,4 @@ protocole.o: protocole.h util.h canal.h
 canal.o: canal.h protocole.h util.h
 test.o: canal.h protocole.h util.h
 
+launch.o: canal.h protocole.h util.h

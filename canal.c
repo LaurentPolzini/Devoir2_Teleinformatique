@@ -14,6 +14,7 @@
 #include "canal.h"
 #include "protocole.h"
 
+
 short physique_port_local_emi = 2000;
 short physique_port_destination_emi = 2001;
 
@@ -31,8 +32,51 @@ int delaiMax = 10;
 int timeout = 20;
 
 
+void setPrbErr(int prbErr) {
+    probErreur = prbErr;
+}
+
+void setPrbLst(int prbLst) {
+    probPerte = prbLst;
+}
+
+void setDelay(int delay) {
+    delaiMax = delay;
+}
+
+int getProbErr(void) {
+    return probErreur;
+}
+
+int getProbLost(void) {
+    return probPerte;
+}
+
+int getDelay(void) {
+    return delaiMax;
+}
+
+
 int getTimeOut(void) {
     return timeout;
+}
+
+uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz) {
+    int isLost = rand() % 100;
+    uint8_t *wError = calloc(frameSiz, sizeof(uint8_t));
+    if (isLost < probPerte) {
+        //printf("Frame perdue\n");
+        return wError;
+    }
+    
+    for (size_t i = 0 ; i < frameSiz ; ++i) {
+        wError[i] = introduceByteError(envoi[i], probErreur); // transform some 1 to 0 or 0 to 1 if error.
+    }
+
+    float delai = (rand() % delaiMax); // delay is in ms
+    usleep(delai * 1000); // en microsec
+
+    return wError;
 }
 
 int getPhysicalLocalEmission(void) {
@@ -204,6 +248,7 @@ frame_t send_through_channel(frame_t envoi) {
     frame_t toSend = createFrame(0, getNum_seq(envoi), getCommande(envoi), 0);
     if (isLost < probPerte) {
         printf("Frame perdue\n");
+        setFrameLost(&toSend);
         return toSend;
     }
 
@@ -228,29 +273,9 @@ frame_t send_through_channel(frame_t envoi) {
     return toSend;
 }
 
-uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz) {
-    int isLost = rand() % 100;
-    uint8_t *wError = calloc(frameSiz, sizeof(uint8_t));
-    if (isLost < probPerte) {
-        //printf("Frame perdue\n");
-        return wError;
-    }
-    
-    for (size_t i = 0 ; i < frameSiz ; ++i) {
-        wError[i] = introduceByteError(envoi[i], probErreur); // transform some 1 to 0 or 0 to 1 if error.
-    }
-
-    float delai = (rand() % delaiMax); // delay is in ms
-    usleep(delai * 1000); // en microsec
-
-    return wError;
-}
-
-
+/*
 int main(void) {
     srand(time(NULL));
-
-    protocole_go_back_n("test.txt");
 
     // pid_t pidFils = -1;
     // switch (pidFils = fork()) {
@@ -270,4 +295,4 @@ int main(void) {
 
     return 0;
 }
-
+*/
