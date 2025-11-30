@@ -14,7 +14,7 @@
 #define PY_CALC_CRC 1
 #define PY_PARSES_FRAME 2
 
-#define NB_TRY_MAX 250
+#define NB_TRY_MAX 500
 
 int timedOut = 0;
 
@@ -54,14 +54,16 @@ frame_t createFrame(uint8_t *datas, uint8_t seqnuM, uint8_t comm, size_t dataLen
     }
     setInfo(&fram, datas, dataLeng);
     fram.num_seq = seqnuM;
-    fram.commande = comm;
+    fram.commande = seqnuM == UINT8_MAX ? OTHER : comm; // seqNum max => trame perdue
     fram.lg_info = dataLeng;
 
+    // calcul du CRC
     uint8_t *tmp = malloc(sizeof(uint8_t) * dataLeng + 3);
-    tmp[0] = comm;
+    tmp[0] = fram.commande;
     tmp[1] = seqnuM;
     tmp[2] = dataLeng;
     memcpy(&(tmp[3]), datas, dataLeng);
+
     fram.somme_ctrl = calculate_CRC(tmp, dataLeng + 3);
 
     free(tmp);
@@ -263,8 +265,15 @@ void afficheFrame(frame_t *frame) {
     printf("Et mon numéro de séquence est : %hhu\n", getNum_seq(*frame));
 }
 
+int isLost(frame_t frame) {
+    return getNum_seq(frame) == UINT8_MAX
+        && getCommande(frame) == OTHER;
+}
+
 /*
     Vérifie le checksum
+
+    Si OTHER - perdu
 */
 int verify_CRC(frame_t *frame, uint16_t attendu) {
     return getCommande(*frame) != OTHER &&
@@ -387,7 +396,7 @@ uint8_t *frame_to_bytes_stuffed(frame_t *frame, size_t *lenConvertedFrame) {
 */
 frame_t bytesToFrame_destuffed(uint8_t *bytes, size_t lenBytes, uint16_t *realCRC) {
     if (!bytes || lenBytes < 2 || bytes[0] != DELIMITER || bytes[lenBytes-1] != DELIMITER)
-        return createFrame(0, 0, 8, 0);
+        return createFrame(0, UINT8_MAX, OTHER, 0);
 
     // remove delimiters
     size_t tmpSize = 0;
@@ -395,7 +404,7 @@ frame_t bytesToFrame_destuffed(uint8_t *bytes, size_t lenBytes, uint16_t *realCR
 
     if (tmpSize < 5) {
         free(tmp);
-        return createFrame(0, 0, OTHER, 0);
+        return createFrame(0, UINT8_MAX, OTHER, 0);
     }
 
     uint8_t comm = tmp[0];
@@ -405,17 +414,15 @@ frame_t bytesToFrame_destuffed(uint8_t *bytes, size_t lenBytes, uint16_t *realCR
 
     if (len > DATA_MAX_LEN) {
         free(tmp);
-        return createFrame(0, 0, OTHER, 0);
+        return createFrame(0, UINT8_MAX, OTHER, 0);
     }
 
     uint8_t *info = calloc(len, sizeof(uint8_t));
-    memcpy(info, &tmp[5], len);
+    memcpy(info, &(tmp[5]), len);
 
     frame_t frame = createFrame(info, seq, comm, len);
 
     cleanPtr((void**)&info);
-
-    
     free(tmp);
 
     return frame;
@@ -447,7 +454,10 @@ int isInCurrFrameSent(int deb, int end, int idx) {
 
 // simule le fait que le recepteur peut etre plus rapide que l'emetteur
 // et envoie un ACK pendant qu'il recoit la fenetre
-int randomACK(frame_t *window, int debWindow, int lastOkACK) {
+uint8_t randomACK(frame_t *window, int debWindow, int lastOkACK) {
+    if (lastOkACK == -1) {
+        return UINT8_MAX; // trame perdue
+    }
     int ind;
     do {
         ind = rand() % tailleFenetre;
@@ -479,9 +489,11 @@ void protocole_go_back_n(char *datas_file_name) {
     double debTimer, finTimer;
     int nbOfFrameSent = 0;
     int nbOfACKReceived = 0;
+    int receivedFrame = 0;
     int nbTry = 0;
 
     int nbOfFrameToSend = 0;
+    frame_t ack;
     frame_t *framesReadyToBeSent = framesFromFile(datas_file_name, &nbOfFrameToSend);
     printf("I have to send %d frames\n", nbOfFrameToSend);
 
@@ -491,8 +503,6 @@ void protocole_go_back_n(char *datas_file_name) {
 
     int indNextFrameToAddToWindow = 0;
 
-    int receivedFrame = 0;
-
     frame_t window[tailleFenetre];
     for (int i = 0 ; i < tailleFenetre && i < nbOfFrameToSend; ++i) {
         window[i] = framesReadyToBeSent[i];
@@ -501,7 +511,6 @@ void protocole_go_back_n(char *datas_file_name) {
     int indexFirstElemWindow = 0;
     int currSend = 0;
 
-    frame_t ack;
     frame_t modifiedFrame, modifiedACK;
 
     int nbOfChangedFrame = 0;
@@ -512,20 +521,24 @@ void protocole_go_back_n(char *datas_file_name) {
 
     int lenToSend = tailleFenetre;
 
-    int lastOKFrame = -1;
+    int lastOKFrame = UINT8_MAX;
 
     int generatedErrorFrame = 0;
     int generatedErrorACK = 0;
+    
+    int nbLostFrames = 0;
+    int nbLostAck = 0;
 
-    size_t lnConvertedFrame = 0;
-    uint8_t *convertedFrame = NULL;
-    uint16_t realFrameCRC = 0;
-    size_t lnConvertedACK = 0;
-    uint8_t *convertedACK = NULL;
-    uint16_t realACKCRC = 0;
+    // for frames <-> (uint8_t *) conversions
+    size_t lnConverted = 0;
+    uint8_t *convertedFrame_t = NULL;
 
-    uint8_t *ACK_wentThroughChannel = NULL;
-    uint8_t *frame_wentThroughChannel = NULL;
+    // when creating a frame, CRC is automatically calculated
+    // when converting a seq of bytes to a frame
+    // CRC is included is the sequence. it will go in this var
+    uint16_t realCRC = 0;
+
+    uint8_t *ACK_frameThroughChannel = NULL;
 
     while ((receivedFrame < nbOfFrameToSend) && (nbTry < NB_TRY_MAX)) {
         /*
@@ -537,68 +550,83 @@ void protocole_go_back_n(char *datas_file_name) {
         for (int i = 0 ; i < lenToSend ; ++i) {
             currSend = (indexFirstElemWindow + i) % tailleFenetre;
             
-            printf("%fs - Envoie trame...\n", (now_ms() - tpsDeb) / 1000);
+            printf("%fs - Envoie trame n°%hhu...\n", (now_ms() - tpsDeb) / 1000, getNum_seq(window[currSend]));
+            ++nbOfFrameSent;
 
-            convertedFrame = frame_to_bytes_stuffed(&(window[currSend]), &lnConvertedFrame);
-            frame_wentThroughChannel = send_through_channel_byteSeq(convertedFrame, lnConvertedFrame);
-            modifiedFrame = bytesToFrame_destuffed(frame_wentThroughChannel, lnConvertedFrame, &realFrameCRC);
+            convertedFrame_t = frame_to_bytes_stuffed(&(window[currSend]), &lnConverted);
+            ACK_frameThroughChannel = send_through_channel_byteSeq(convertedFrame_t, lnConverted);
+            modifiedFrame = bytesToFrame_destuffed(ACK_frameThroughChannel, lnConverted, &realCRC);
+            free(ACK_frameThroughChannel);
             
-            if (!verify_CRC(&modifiedFrame, realFrameCRC)) { // it pains me to do that but it's for the sake of datas
+            if (isLost(modifiedFrame)) {
+                printf("trame perdue\n");
+                ++nbLostFrames;
+                break;
+            }   
+            if (!verify_CRC(&modifiedFrame, realCRC)) { // it pains me to do that but it's for the sake of datas
                 printf("    Error generated...\n");
                 ++generatedErrorFrame;
-                ++nbTry;
-                //break; // le recepteur ne donnera pas un ACK supérieur ou égal
+                break; // le recepteur ne donnera pas un ACK supérieur ou égal
                 // au paquet erroné, on sort
-            } else {
-                lastOKFrame = currSend;
             }
+        
+            lastOKFrame = currSend;
         }
-        nbOfFrameSent += lenToSend;
+        if (lastOKFrame == UINT8_MAX) {
+            ack = createFrame(0, UINT8_MAX, ACK, 0); // ack de la derniere trame
+            printf("%fs - Erreur dans la trame recue... attente de renvoie de l'emetteur\n", (now_ms() - tpsDeb) / 1000);
+            timedOut = 1;
+        } else {
+            // au moins une trame correctement recue
+            ack = createFrame(0, getNum_seq(window[lastOKFrame]), ACK, 0); // ack de la derniere trame
+            printf("%fs - Envoie ACK n°%hhu...\n", (now_ms() - tpsDeb) / 1000, getNum_seq(ack));
+            convertedFrame_t = frame_to_bytes_stuffed(&ack, &lnConverted);
 
-        ack = createFrame(0, randomACK(window, indexFirstElemWindow, lastOKFrame), ACK, 0);
-        //ack = createFrame(0, lastOKFrame, ACK, 0);
-        convertedACK = frame_to_bytes_stuffed(&ack, &lnConvertedACK);
-        do {
-            printf("%fs - Envoie ACK...\n", (now_ms() - tpsDeb) / 1000);
             debTimer = now_ms();
-            ACK_wentThroughChannel = send_through_channel_byteSeq(convertedACK, lnConvertedACK);
+            ACK_frameThroughChannel = send_through_channel_byteSeq(convertedFrame_t, lnConverted);
             finTimer = now_ms();
+
+            modifiedACK = bytesToFrame_destuffed(ACK_frameThroughChannel, lnConverted, &realCRC);
+            free(ACK_frameThroughChannel);
 
             if (finTimer - debTimer >= getTimeOut()) {
                 timedOut = 1;
-                ++nbTry;
                 printf("Time out !\n");
-                break;
             }
 
-            modifiedACK = bytesToFrame_destuffed(ACK_wentThroughChannel, lnConvertedACK, &realACKCRC);
-            
-            if (!verify_CRC(&modifiedACK, realACKCRC)) {
-                printf("ack crc not ok\n");
-                ++generatedErrorACK;
-                ++nbTry;
+            if (!(isLost(modifiedACK) || timedOut)) {
+                ++nbOfACKReceived;
             }
-            free(ACK_wentThroughChannel);
-        } while (!verify_CRC(&modifiedACK, realACKCRC) && nbTry < NB_TRY_MAX);
-        // finally got a correct ACK
-        if (nbTry >= NB_TRY_MAX) {
-            printf("Trop d'erreur sur le canal, sortie\n"); 
-            return;
+
+            if (isLost(modifiedACK)) {
+                printf("ack perdu\n");
+                ++nbLostAck;
+            } else {
+                if (!verify_CRC(&modifiedACK, realCRC)) {
+                    printf("crc de l'ack incorrect\n");
+                    ++generatedErrorACK;
+                }
+            }
         }
-
-        ++nbOfACKReceived;
 
         /*
             slides the window. Bornes inclusives
+
+            Slides if CRC ok and not lost
         */
-        while (getNum_seq(window[indexFirstElemWindow]) != getNum_seq(ack)) {
-            ++nbOfChangedFrame;
-            indexFirstElemWindow = (indexFirstElemWindow + 1) % tailleFenetre;
-        }
-        if (getNum_seq(window[indexFirstElemWindow]) == getNum_seq(ack)) {
-            ++nbOfChangedFrame;
-            indexFirstElemWindow = (indexFirstElemWindow + 1) % tailleFenetre;
-        }
+        if (verify_CRC(&modifiedACK, realCRC) && !isLost(modifiedACK) && !timedOut) {
+            printf("%fs - ACK recu n°%hhu...\n", (now_ms() - tpsDeb) / 1000, getNum_seq(modifiedACK));
+            while (getNum_seq(window[indexFirstElemWindow]) != getNum_seq(modifiedACK)) {
+                ++nbOfChangedFrame;
+                indexFirstElemWindow = (indexFirstElemWindow + 1) % tailleFenetre;
+            }
+            // inclusion de la derniere borne
+            if (getNum_seq(window[indexFirstElemWindow]) == getNum_seq(modifiedACK)) {
+                ++nbOfChangedFrame;
+                indexFirstElemWindow = (indexFirstElemWindow + 1) % tailleFenetre;
+            }
+        } 
+
         // sending the same window again
         if (nbOfChangedFrame == 0) {
             ++nbTry;
@@ -616,12 +644,20 @@ void protocole_go_back_n(char *datas_file_name) {
             ++receivedFrame;
         }
 
+         // re init des vars
+        lastOKFrame = UINT8_MAX;
         nbOfChangedFrame = 0;
+        timedOut = 0;
+    }
+    if (nbTry >= NB_TRY_MAX) {
+        printf("Trop d'erreur sur le canal, sortie\n"); 
+        return;
     }
 
     /*
         previent d'avoir fini
     */
+   /*
     frame_t frameEnd = createFrame(0, N, CON_CLOSE, 0);
     uint8_t *convertedEnding;
     size_t lnconvertedEnding;
@@ -629,27 +665,30 @@ void protocole_go_back_n(char *datas_file_name) {
     do {
         printf("%fs Envoie fin connexion...\n", (now_ms() - tpsDeb) / 1000);
         convertedEnding = frame_to_bytes_stuffed(&frameEnd, &lnconvertedEnding);
-        frame_wentThroughChannel = send_through_channel_byteSeq(convertedEnding, lnconvertedEnding);
-        modifiedFrame = bytesToFrame_destuffed(frame_wentThroughChannel, lnconvertedEnding, &realFrameCRC);
+        ACK_frameThroughChannel = send_through_channel_byteSeq(convertedEnding, lnconvertedEnding);
+        modifiedFrame = bytesToFrame_destuffed(ACK_frameThroughChannel, lnconvertedEnding, &realCRC);
+        free(ACK_frameThroughChannel);
 
-        if (!verify_CRC(&modifiedFrame, realFrameCRC)) {
+        if (!verify_CRC(&modifiedFrame, realCRC)) {
             ++generatedErrorFrame;
             ++nbTry;
             printf("Error...\n");
         }
-    } while (!verify_CRC(&modifiedFrame, realFrameCRC));
+    } while (!verify_CRC(&modifiedFrame, realCRC));
     // ca y est, j'ai recu une frame sans erreur
     do {
         ack = createFrame(0, N, CON_CLOSE_ACK, 0);
-        convertedACK = frame_to_bytes_stuffed(&ack, &lnConvertedACK);
-        convertedACK = send_through_channel_byteSeq(convertedACK, lnConvertedACK);
-        
-        modifiedACK = bytesToFrame_destuffed(convertedACK, lnConvertedACK, &realACKCRC);
-        if (!verify_CRC(&modifiedACK, realACKCRC)) {
+        convertedFrame_t = frame_to_bytes_stuffed(&ack, &lnConverted);
+        ACK_frameThroughChannel = send_through_channel_byteSeq(convertedFrame_t, lnConverted);
+        modifiedACK = bytesToFrame_destuffed(ACK_frameThroughChannel, lnConverted, &realCRC);
+        free(ACK_frameThroughChannel);
+
+        if (!verify_CRC(&modifiedACK, realCRC)) {
             ++generatedErrorACK;
             ++nbTry;
         }
-    } while (!verify_CRC(&modifiedACK, realACKCRC));
+    } while (!verify_CRC(&modifiedACK, realCRC));
+     */
     printf("%fs Reception, terminaison de la connexion...\n", (now_ms() - tpsDeb) / 1000);
     // ca y est, j'ai reussi a prevenir 
     // l emetteur que j'ai bien recu sa frame de fin de connexion
@@ -663,12 +702,12 @@ void protocole_go_back_n(char *datas_file_name) {
     printf("Frames retransmises : %d\n", nbOfFrameSent - nbOfFrameToSend);
     printf("ACK reçus : %d\n", nbOfACKReceived);
     printf("%d trames erronées. %d ACK erronés.\n", generatedErrorFrame, generatedErrorACK);
+    printf("%d trames perdues. %d ACK perdus.\n", nbLostFrames, nbLostAck);
     printf("Durée totale de transmission : %fs.\n", (tpsFin - tpsDeb) / 1000);
 
     free(framesReadyToBeSent);
-    free(convertedACK);
-    free(convertedFrame);
-    free(convertedEnding);
+    free(convertedFrame_t);
+    //free(convertedEnding);
 }
 
 

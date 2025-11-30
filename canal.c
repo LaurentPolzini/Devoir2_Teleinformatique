@@ -24,8 +24,8 @@ int physique_socket;
 
 char destination[10] = "localhost";
 
-int probErreur = 5;
-int probPerte = 3;
+int probErreur = 0;
+int probPerte = 20;
 int delaiMax = 10;
 
 int timeout = 20;
@@ -202,7 +202,7 @@ void envoie_reseau(frame_t *frame, short physicalPortDest) {
 frame_t send_through_channel(frame_t envoi) {
     int isLost = rand() % 100;
     frame_t toSend = createFrame(0, getNum_seq(envoi), getCommande(envoi), 0);
-    if (isLost <= probPerte) {
+    if (isLost < probPerte) {
         printf("Frame perdue\n");
         return toSend;
     }
@@ -231,8 +231,8 @@ frame_t send_through_channel(frame_t envoi) {
 uint8_t *send_through_channel_byteSeq(uint8_t *envoi, size_t frameSiz) {
     int isLost = rand() % 100;
     uint8_t *wError = calloc(frameSiz, sizeof(uint8_t));
-    if (isLost <= probPerte) {
-        printf("Frame perdue\n");
+    if (isLost < probPerte) {
+        //printf("Frame perdue\n");
         return wError;
     }
     
