@@ -88,12 +88,6 @@ frame_t *framesFromFile(char *file_name, int *nbOfFramesCreated);
 
 void afficheFrame(frame_t *frame);
 
-uint8_t *frame_to_bytes_stuffed(frame_t *frame, size_t *lenConvertedFrame);
-
-frame_t bytesToFrame_destuffed(uint8_t *bytes, size_t lenBytes, uint16_t *realCRC);
-
-
-
 //---- deprecated
 // old protocols, non fonctionnels.
 void go_back_n_recepteur(void);

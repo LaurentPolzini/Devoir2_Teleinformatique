@@ -42,8 +42,9 @@ mrproper: clean
 
 util.o: util.h
 
-protocole.o: protocole.h util.h canal.h
+protocole.o: protocole.h util.h canal.h stuffing.h
 canal.o: canal.h protocole.h util.h
 test.o: canal.h protocole.h util.h
+stuffing.o: stuffing.h protocole.h
 
 launch.o: canal.h protocole.h util.h
